@@ -1,0 +1,33 @@
+{
+  "name": "hmns-webar",
+  "version": "1.0.0",
+  "description": "WebAR application with MindAR.js for image tracking and 3D model display",
+  "main": "index.html",
+  "scripts": {
+    "dev": "npx http-server -p 8080 --cors",
+    "dev-ssl": "npx http-server -p 8080 --ssl --cors",
+    "start": "npm run dev-ssl"
+  },
+  "keywords": [
+    "webAR",
+    "MindAR",
+    "Three.js",
+    "augmented-reality",
+    "image-tracking",
+    "3d-models"
+  ],
+  "author": "HMNS",
+  "license": "MIT",
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hmns/hmns-webAR.git"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ]
+} 

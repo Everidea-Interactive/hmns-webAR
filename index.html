@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebAR - MindAR Experience</title>
+    <link rel="stylesheet" href="src/styles/main.css">
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.147.0/examples/jsm/",
+            "mind-ar": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-three.prod.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="app">
+        <!-- Loading Screen -->
+        <div id="loading-screen">
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <p>Loading WebAR Experience...</p>
+            </div>
+        </div>
+
+        <!-- AR Container -->
+        <div id="ar-container">
+            <canvas id="ar-canvas"></canvas>
+        </div>
+
+        <!-- UI Controls -->
+        <div id="ui-controls">
+            <button id="screenshot-btn" class="control-btn" title="Take Screenshot">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 2C7.9 2 7 2.9 7 4V5H4C2.9 5 2 5.9 2 7V19C2 20.1 2.9 21 4 21H20C21.1 21 22 20.1 22 19V7C22 5.9 21.1 5 20 5H17V4C17 2.9 16.1 2 15 2H9ZM12 7C15.3 7 18 9.7 18 13S15.3 19 12 19 6 16.3 6 13 8.7 7 12 7ZM12 9C9.8 9 8 10.8 8 13S9.8 17 12 17 16 15.2 16 13 14.2 9 12 9Z"/>
+                </svg>
+            </button>
+            
+            <button id="record-btn" class="control-btn" title="Start Recording">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5V19L19 12L8 5Z"/>
+                </svg>
+            </button>
+            
+            <button id="stop-record-btn" class="control-btn hidden" title="Stop Recording">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Instructions -->
+        <div id="instructions">
+            <p>Point your camera at the target image to see the 3D model</p>
+        </div>
+
+        <!-- Status -->
+        <div id="status" class="hidden"></div>
+    </div>
+
+    <script type="module" src="src/js/main.js"></script>
+</body>
+</html> 
