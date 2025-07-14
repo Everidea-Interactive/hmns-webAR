@@ -15,6 +15,9 @@ class WebARApp {
         this.videoElement = null;
         this.compositeCanvas = null;
         this.compositeCtx = null;
+        this.initialModelY = undefined;
+        this.floatTime = 0;
+        this.shadowPlane = null;
         
         this.init();
     }
@@ -47,13 +50,25 @@ class WebARApp {
         this.renderer.preserveDrawingBuffer = true;
         this.renderer.autoClear = false;
 
-        // Add lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        // Add enhanced lighting for better 3D model appearance
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
         this.scene.add(ambientLight);
 
+        // Main directional light
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(1, 1, 1);
+        directionalLight.position.set(2, 2, 1);
+        directionalLight.castShadow = true;
         this.scene.add(directionalLight);
+        
+        // Fill light from the opposite side
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+        fillLight.position.set(-1, 1, 1);
+        this.scene.add(fillLight);
+        
+        // Rim light from behind
+        const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
+        rimLight.position.set(0, 1, -1);
+        this.scene.add(rimLight);
     }
 
     async loadModel() {
@@ -71,12 +86,39 @@ class WebARApp {
 
             this.model = gltf.scene;
             
-            // Scale and position the model
-            this.model.scale.set(0.1, 0.1, 0.1);
-            this.model.position.set(0, 0, 0);
+            // Get model bounding box to calculate proper scaling
+            const box = new THREE.Box3().setFromObject(this.model);
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+            
+            console.log('Model dimensions:', size);
+            console.log('Model center:', center);
+            
+            // Calculate scale to fit the model within the target bounds
+            // Assuming target is roughly 1 unit wide
+            const targetSize = 0.8; // 80% of target size for padding
+            const maxDimension = Math.max(size.x, size.y, size.z);
+            const scale = targetSize / maxDimension;
+            
+            // Apply scaling
+            this.model.scale.set(scale, scale, scale);
+            
+            // Center the model and position it on top of the target
+            this.model.position.set(
+                -center.x * scale, // Center horizontally
+                -center.y * scale + size.y * scale * 0.5, // Place on top of target
+                0.01 // Slightly above the target plane
+            );
+            
+            // Optional: Add slight rotation for better viewing angle
+            this.model.rotation.y = Math.PI * 0.1; // 18 degrees
             
             // Add model to anchor
             const anchor = this.mindarThree.addAnchor(0);
+            
+            // Create a subtle shadow plane
+            this.createShadowPlane(anchor.group, scale);
+            
             anchor.group.add(this.model);
 
             // Add animations if available
@@ -86,12 +128,45 @@ class WebARApp {
                     this.mixer.clipAction(clip).play();
                 });
             }
+            
+            // Add floating animation
+            this.addFloatingAnimation();
 
-            console.log('3D model loaded successfully');
+            console.log('3D model loaded and positioned successfully');
+            console.log('Final scale:', scale);
+            console.log('Final position:', this.model.position);
         } catch (error) {
             console.error('Failed to load 3D model:', error);
             this.showStatus('Failed to load 3D model', true);
         }
+    }
+
+    addFloatingAnimation() {
+        if (!this.model) return;
+        
+        // Store initial position for floating animation
+        this.initialModelY = this.model.position.y;
+        this.floatTime = 0;
+    }
+
+    createShadowPlane(parentGroup, modelScale) {
+        // Create a subtle circular shadow beneath the model
+        const shadowGeometry = new THREE.CircleGeometry(0.3 * modelScale, 16);
+        const shadowMaterial = new THREE.MeshBasicMaterial({
+            color: 0x000000,
+            opacity: 0.3,
+            transparent: true,
+            depthWrite: false
+        });
+        
+        const shadowPlane = new THREE.Mesh(shadowGeometry, shadowMaterial);
+        shadowPlane.rotation.x = -Math.PI / 2; // Rotate to lie flat
+        shadowPlane.position.set(0, 0.001, 0); // Just above the target surface
+        
+        parentGroup.add(shadowPlane);
+        
+        // Store reference for animation
+        this.shadowPlane = shadowPlane;
     }
 
     setupUI() {
@@ -257,6 +332,22 @@ class WebARApp {
         
         if (this.mixer) {
             this.mixer.update(0.016); // 60fps
+        }
+        
+        // Update floating animation
+        if (this.model && this.initialModelY !== undefined) {
+            this.floatTime += 0.016;
+            const floatOffset = Math.sin(this.floatTime * 2) * 0.02; // Gentle floating motion
+            this.model.position.y = this.initialModelY + floatOffset;
+            
+            // Animate shadow opacity based on height
+            if (this.shadowPlane) {
+                const shadowOpacity = 0.3 - (floatOffset * 2); // Shadow gets lighter as model floats up
+                this.shadowPlane.material.opacity = Math.max(0.1, shadowOpacity);
+            }
+            
+            // Optional: Add gentle rotation
+            this.model.rotation.y += 0.005; // Slow rotation
         }
         
         // Clear and render for proper media capture
