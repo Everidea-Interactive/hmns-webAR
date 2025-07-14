@@ -12,6 +12,9 @@ class WebARApp {
         this.mediaRecorder = null;
         this.recordedChunks = [];
         this.isRecording = false;
+        this.videoElement = null;
+        this.compositeCanvas = null;
+        this.compositeCtx = null;
         
         this.init();
     }
@@ -39,6 +42,10 @@ class WebARApp {
         this.renderer = renderer;
         this.scene = scene;
         this.camera = camera;
+
+        // Configure renderer for media capture
+        this.renderer.preserveDrawingBuffer = true;
+        this.renderer.autoClear = false;
 
         // Add lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -101,6 +108,50 @@ class WebARApp {
         document.getElementById('stop-record-btn').addEventListener('click', () => {
             this.stopRecording();
         });
+        
+        // Debug: Add double-tap on instructions to show debug info
+        document.getElementById('instructions').addEventListener('dblclick', () => {
+            this.showDebugInfo();
+        });
+    }
+
+    showDebugInfo() {
+        console.log('=== DEBUG INFO ===');
+        console.log('Video element:', this.videoElement);
+        console.log('Video playing:', this.videoElement ? !this.videoElement.paused : 'no video');
+        
+        if (this.videoElement) {
+            const videoAspect = this.videoElement.videoWidth / this.videoElement.videoHeight;
+            console.log('Video dimensions:', `${this.videoElement.videoWidth}x${this.videoElement.videoHeight} (aspect: ${videoAspect.toFixed(2)})`);
+        }
+        
+        console.log('Renderer canvas:', this.renderer.domElement);
+        const rendererAspect = this.renderer.domElement.width / this.renderer.domElement.height;
+        console.log('Renderer canvas size:', `${this.renderer.domElement.width}x${this.renderer.domElement.height} (aspect: ${rendererAspect.toFixed(2)})`);
+        
+        console.log('Composite canvas:', this.compositeCanvas);
+        if (this.compositeCanvas) {
+            const compositeAspect = this.compositeCanvas.width / this.compositeCanvas.height;
+            console.log('Composite canvas size:', `${this.compositeCanvas.width}x${this.compositeCanvas.height} (aspect: ${compositeAspect.toFixed(2)})`);
+        }
+        
+        // Container info
+        const container = document.querySelector('#ar-container');
+        const containerRect = container.getBoundingClientRect();
+        const containerAspect = containerRect.width / containerRect.height;
+        console.log('Container size:', `${containerRect.width}x${containerRect.height} (aspect: ${containerAspect.toFixed(2)})`);
+        
+        // Try to capture from different sources
+        const rendererCanvas = this.renderer.domElement;
+        const rendererDataURL = rendererCanvas.toDataURL('image/png').substring(0, 100);
+        console.log('Renderer canvas data preview:', rendererDataURL);
+        
+        if (this.compositeCanvas) {
+            const compositeDataURL = this.compositeCanvas.toDataURL('image/png').substring(0, 100);
+            console.log('Composite canvas data preview:', compositeDataURL);
+        }
+        
+        this.showStatus('Debug info logged to console');
     }
 
     async startAR() {
@@ -110,8 +161,95 @@ class WebARApp {
         // Start MindAR
         await this.mindarThree.start();
         
+        // Setup composite canvas for media capture
+        this.setupCompositeCanvas();
+        
+        // Log canvas information for debugging
+        console.log('Canvas element:', this.renderer.domElement);
+        console.log('Canvas size:', this.renderer.domElement.width, 'x', this.renderer.domElement.height);
+        console.log('Renderer context:', this.renderer.getContext());
+        
         // Start render loop
         this.render();
+    }
+
+    setupCompositeCanvas() {
+        // Wait a bit for MindAR to fully initialize
+        setTimeout(() => {
+            // Get the video element from MindAR
+            const container = document.querySelector('#ar-container');
+            this.videoElement = container.querySelector('video');
+            
+            if (!this.videoElement) {
+                console.warn('Video element not found, using fallback method');
+                return;
+            }
+
+            // Create a composite canvas for combining video and 3D content
+            this.compositeCanvas = document.createElement('canvas');
+            this.compositeCtx = this.compositeCanvas.getContext('2d');
+            
+            this.updateCanvasSize();
+            
+            // Add resize listener for responsive behavior
+            window.addEventListener('resize', () => {
+                this.updateCanvasSize();
+            });
+            
+            // Add orientation change listener
+            window.addEventListener('orientationchange', () => {
+                setTimeout(() => {
+                    this.updateCanvasSize();
+                }, 100);
+            });
+            
+            console.log('Composite canvas setup with responsive sizing');
+        }, 1000);
+    }
+
+    updateCanvasSize() {
+        if (!this.compositeCanvas) return;
+        
+        const container = document.querySelector('#ar-container');
+        const containerRect = container.getBoundingClientRect();
+        const rendererCanvas = this.renderer.domElement;
+        
+        // Get device pixel ratio for high-DPI displays
+        const pixelRatio = window.devicePixelRatio || 1;
+        
+        // Calculate optimal dimensions based on screen size
+        const screenWidth = window.innerWidth;
+        const screenHeight = window.innerHeight;
+        
+        let targetWidth, targetHeight;
+        
+        if (screenWidth <= 480) {
+            // Small mobile
+            targetWidth = Math.min(screenWidth * pixelRatio, 1280);
+            targetHeight = Math.min(screenHeight * pixelRatio, 720);
+        } else if (screenWidth <= 768) {
+            // Tablet/larger mobile
+            targetWidth = Math.min(screenWidth * pixelRatio, 1920);
+            targetHeight = Math.min(screenHeight * pixelRatio, 1080);
+        } else {
+            // Desktop
+            targetWidth = Math.min(containerRect.width * pixelRatio, 1920);
+            targetHeight = Math.min(containerRect.height * pixelRatio, 1080);
+        }
+        
+        // Ensure minimum quality
+        targetWidth = Math.max(targetWidth, 640);
+        targetHeight = Math.max(targetHeight, 480);
+        
+        this.compositeCanvas.width = targetWidth;
+        this.compositeCanvas.height = targetHeight;
+        
+        console.log('Canvas size updated:', {
+            composite: `${this.compositeCanvas.width}x${this.compositeCanvas.height}`,
+            container: `${containerRect.width}x${containerRect.height}`,
+            screen: `${screenWidth}x${screenHeight}`,
+            pixelRatio: pixelRatio
+        });
     }
 
     render() {
@@ -121,61 +259,268 @@ class WebARApp {
             this.mixer.update(0.016); // 60fps
         }
         
+        // Clear and render for proper media capture
+        this.renderer.clear();
         this.renderer.render(this.scene, this.camera);
+        
+        // Update composite canvas if available
+        this.updateCompositeCanvas();
+    }
+
+    updateCompositeCanvas() {
+        if (!this.compositeCanvas || !this.videoElement || !this.compositeCtx) {
+            console.log('Missing composite elements:', {
+                canvas: !!this.compositeCanvas,
+                video: !!this.videoElement,
+                ctx: !!this.compositeCtx
+            });
+            return;
+        }
+
+        try {
+            // Clear composite canvas
+            this.compositeCtx.clearRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
+            
+            // Check video state
+            console.log('Video state:', {
+                width: this.videoElement.videoWidth,
+                height: this.videoElement.videoHeight,
+                paused: this.videoElement.paused,
+                ended: this.videoElement.ended,
+                readyState: this.videoElement.readyState
+            });
+            
+            // Draw video background
+            if (this.videoElement.videoWidth > 0 && this.videoElement.videoHeight > 0 && this.videoElement.readyState >= 2) {
+                this.drawVideoWithAspectRatio();
+            } else {
+                // Draw a placeholder if video isn't ready
+                this.compositeCtx.fillStyle = '#333333';
+                this.compositeCtx.fillRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
+                this.compositeCtx.fillStyle = '#ffffff';
+                this.compositeCtx.font = '20px Arial';
+                this.compositeCtx.textAlign = 'center';
+                this.compositeCtx.fillText('Video Loading...', this.compositeCanvas.width / 2, this.compositeCanvas.height / 2);
+            }
+            
+            // Draw 3D content on top
+            const rendererCanvas = this.renderer.domElement;
+            if (rendererCanvas.width > 0 && rendererCanvas.height > 0) {
+                this.compositeCtx.globalCompositeOperation = 'source-over';
+                try {
+                    this.compositeCtx.drawImage(
+                        rendererCanvas,
+                        0, 0,
+                        this.compositeCanvas.width,
+                        this.compositeCanvas.height
+                    );
+                    console.log('3D content drawn successfully');
+                } catch (error) {
+                    console.error('Error drawing 3D content:', error);
+                }
+            }
+        } catch (error) {
+            console.error('Error in updateCompositeCanvas:', error);
+        }
+    }
+
+    drawVideoWithAspectRatio() {
+        const video = this.videoElement;
+        const canvas = this.compositeCanvas;
+        const ctx = this.compositeCtx;
+
+        try {
+            // Simple approach first - just draw the video
+            ctx.drawImage(
+                video,
+                0, 0,
+                canvas.width,
+                canvas.height
+            );
+            
+            // Log success for debugging
+            console.log('Video drawn successfully');
+        } catch (error) {
+            console.error('Error drawing video:', error);
+            
+            // Fallback: fill with a test pattern
+            ctx.fillStyle = '#ff0000';
+            ctx.fillRect(0, 0, canvas.width / 2, canvas.height);
+            ctx.fillStyle = '#00ff00';
+            ctx.fillRect(canvas.width / 2, 0, canvas.width / 2, canvas.height);
+        }
     }
 
     takeScreenshot() {
         try {
-            const canvas = this.renderer.domElement;
-            const dataURL = canvas.toDataURL('image/png');
+            console.log('Taking screenshot...');
             
-            // Create download link
-            const link = document.createElement('a');
-            link.download = `webAR-screenshot-${Date.now()}.png`;
-            link.href = dataURL;
-            link.click();
+            // Try multiple methods in order of preference
+            if (this.videoElement && this.compositeCanvas) {
+                console.log('Trying composite canvas method');
+                this.updateCompositeCanvas();
+                this.captureFromCanvas(this.compositeCanvas, 'composite');
+            } else if (this.videoElement) {
+                console.log('Trying direct video capture method');
+                this.captureFromVideo();
+            } else {
+                console.log('Using renderer canvas fallback');
+                this.renderer.clear();
+                this.renderer.render(this.scene, this.camera);
+                this.captureFromCanvas(this.renderer.domElement, 'renderer');
+            }
             
-            this.showStatus('Screenshot saved!');
         } catch (error) {
             console.error('Screenshot failed:', error);
             this.showStatus('Screenshot failed', true);
         }
     }
 
+    captureFromCanvas(canvas, method) {
+        requestAnimationFrame(() => {
+            try {
+                const dataURL = canvas.toDataURL('image/png', 1.0);
+                console.log(`${method} canvas data URL length:`, dataURL.length);
+                
+                if (dataURL.length < 1000) {
+                    throw new Error(`${method} canvas appears to be empty`);
+                }
+                
+                this.downloadImage(dataURL);
+                this.showStatus('Screenshot saved!');
+            } catch (error) {
+                console.error(`${method} canvas capture failed:`, error);
+                this.showStatus(`Screenshot failed (${method})`, true);
+            }
+        });
+    }
+
+    captureFromVideo() {
+        try {
+            // Create a temporary canvas to capture video frame
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            tempCanvas.width = this.videoElement.videoWidth || 1280;
+            tempCanvas.height = this.videoElement.videoHeight || 720;
+            
+            tempCtx.drawImage(this.videoElement, 0, 0, tempCanvas.width, tempCanvas.height);
+            
+            const dataURL = tempCanvas.toDataURL('image/png', 1.0);
+            console.log('Video capture data URL length:', dataURL.length);
+            
+            if (dataURL.length < 1000) {
+                throw new Error('Video capture appears to be empty');
+            }
+            
+            this.downloadImage(dataURL);
+            this.showStatus('Screenshot saved!');
+        } catch (error) {
+            console.error('Video capture failed:', error);
+            this.showStatus('Video capture failed', true);
+        }
+    }
+
+    downloadImage(dataURL) {
+        const link = document.createElement('a');
+        link.download = `webAR-screenshot-${Date.now()}.png`;
+        link.href = dataURL;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
     async startRecording() {
         try {
-            const canvas = this.renderer.domElement;
-            const stream = canvas.captureStream(30); // 30fps
+            let canvasToRecord = this.compositeCanvas;
+            
+            // Check if MediaRecorder is supported
+            if (!MediaRecorder) {
+                throw new Error('Recording not supported in this browser');
+            }
+            
+            // Use composite canvas if available, otherwise fallback
+            if (!canvasToRecord || !this.videoElement) {
+                console.log('Using fallback method for recording');
+                canvasToRecord = this.renderer.domElement;
+            }
+            
+            if (!canvasToRecord.captureStream) {
+                throw new Error('Canvas stream capture not supported');
+            }
+            
+            // Try different MIME types in order of preference
+            const mimeTypes = [
+                'video/webm;codecs=vp9',
+                'video/webm;codecs=vp8',
+                'video/webm',
+                'video/mp4'
+            ];
+            
+            let selectedMimeType = null;
+            for (const mimeType of mimeTypes) {
+                if (MediaRecorder.isTypeSupported(mimeType)) {
+                    selectedMimeType = mimeType;
+                    break;
+                }
+            }
+            
+            if (!selectedMimeType) {
+                throw new Error('No supported video format found');
+            }
+            
+            // Create stream with appropriate frame rate
+            const stream = canvasToRecord.captureStream(30);
+            
+            // Verify stream has video tracks
+            if (!stream.getVideoTracks().length) {
+                throw new Error('No video tracks available');
+            }
+            
+            console.log('Recording canvas:', canvasToRecord === this.compositeCanvas ? 'composite' : 'renderer');
+            console.log('Stream tracks:', stream.getVideoTracks().length);
             
             this.mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'video/webm;codecs=vp9'
+                mimeType: selectedMimeType,
+                videoBitsPerSecond: 2500000 // 2.5 Mbps
             });
 
             this.recordedChunks = [];
             
             this.mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
+                if (event.data && event.data.size > 0) {
                     this.recordedChunks.push(event.data);
+                    console.log('Recording chunk:', event.data.size, 'bytes');
                 }
             };
 
             this.mediaRecorder.onstop = () => {
+                console.log('Recording stopped, chunks:', this.recordedChunks.length);
                 this.saveRecording();
             };
 
-            this.mediaRecorder.start();
+            this.mediaRecorder.onerror = (event) => {
+                console.error('MediaRecorder error:', event.error);
+                this.showStatus('Recording error occurred', true);
+                this.resetRecordingUI();
+            };
+
+            // Start recording with smaller timeslice for better reliability
+            this.mediaRecorder.start(1000); // 1 second chunks
             this.isRecording = true;
             
             // Update UI
             document.getElementById('record-btn').classList.add('hidden');
             document.getElementById('stop-record-btn').classList.remove('hidden');
-            document.getElementById('record-btn').classList.add('recording');
+            document.getElementById('stop-record-btn').classList.add('recording');
             
             this.showStatus('Recording started');
+            console.log('Recording started with MIME type:', selectedMimeType);
             
         } catch (error) {
             console.error('Recording failed to start:', error);
-            this.showStatus('Recording failed to start', true);
+            this.showStatus(`Recording failed: ${error.message}`, true);
+            this.resetRecordingUI();
         }
     }
 
@@ -183,34 +528,65 @@ class WebARApp {
         if (this.mediaRecorder && this.isRecording) {
             this.mediaRecorder.stop();
             this.isRecording = false;
-            
-            // Update UI
-            document.getElementById('record-btn').classList.remove('hidden', 'recording');
-            document.getElementById('stop-record-btn').classList.add('hidden');
-            
+            this.resetRecordingUI();
             this.showStatus('Recording stopped');
         }
     }
 
+    resetRecordingUI() {
+        document.getElementById('record-btn').classList.remove('hidden', 'recording');
+        document.getElementById('stop-record-btn').classList.add('hidden', 'recording');
+        this.isRecording = false;
+    }
+
     saveRecording() {
         try {
-            const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+            if (!this.recordedChunks.length) {
+                throw new Error('No recording data available');
+            }
+
+            console.log('Saving recording with', this.recordedChunks.length, 'chunks');
+            
+            // Determine file extension based on the first chunk's type
+            const firstChunk = this.recordedChunks[0];
+            let fileExtension = 'webm';
+            let mimeType = 'video/webm';
+            
+            if (firstChunk.type) {
+                if (firstChunk.type.includes('mp4')) {
+                    fileExtension = 'mp4';
+                    mimeType = 'video/mp4';
+                }
+            }
+            
+            const blob = new Blob(this.recordedChunks, { type: mimeType });
+            console.log('Created blob:', blob.size, 'bytes, type:', blob.type);
+            
+            if (blob.size === 0) {
+                throw new Error('Recording is empty');
+            }
+            
             const url = URL.createObjectURL(blob);
             
             // Create download link
             const link = document.createElement('a');
-            link.download = `webAR-recording-${Date.now()}.webm`;
+            link.download = `webAR-recording-${Date.now()}.${fileExtension}`;
             link.href = url;
+            document.body.appendChild(link);
             link.click();
+            document.body.removeChild(link);
             
             // Clean up
-            URL.revokeObjectURL(url);
+            setTimeout(() => {
+                URL.revokeObjectURL(url);
+            }, 1000);
+            
             this.recordedChunks = [];
             
             this.showStatus('Recording saved!');
         } catch (error) {
             console.error('Failed to save recording:', error);
-            this.showStatus('Failed to save recording', true);
+            this.showStatus(`Save failed: ${error.message}`, true);
         }
     }
 
