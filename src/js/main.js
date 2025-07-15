@@ -78,6 +78,7 @@ class WebARApp {
         // Configure renderer for media capture
         this.renderer.preserveDrawingBuffer = true;
         this.renderer.autoClear = false;
+        this.renderer.setClearColor(0x000000, 0); // Transparent background
 
         // Add enhanced lighting for better 3D model appearance
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
@@ -271,11 +272,10 @@ class WebARApp {
             this.stopRecording();
         });
         
-        // Debug: Add double-tap on instructions to show debug info
-        document.getElementById('instructions').addEventListener('dblclick', () => {
-            this.showDebugInfo();
-        });
+
     }
+
+
 
     // Stabilization methods
     updateTrackingStabilization() {
@@ -561,12 +561,12 @@ class WebARApp {
             const rendererCanvas = this.renderer.domElement;
             if (rendererCanvas.width > 0 && rendererCanvas.height > 0) {
                 this.compositeCtx.globalCompositeOperation = 'source-over';
+                this.compositeCtx.globalAlpha = 1.0;
                 try {
                     this.compositeCtx.drawImage(
                         rendererCanvas,
-                        0, 0,
-                        this.compositeCanvas.width,
-                        this.compositeCanvas.height
+                        0, 0, rendererCanvas.width, rendererCanvas.height,
+                        0, 0, this.compositeCanvas.width, this.compositeCanvas.height
                     );
 
                 } catch (error) {
@@ -606,15 +606,23 @@ class WebARApp {
 
     takeScreenshot() {
         try {
+            // Force a render first to ensure 3D content is up to date
+            this.renderer.clear();
+            this.renderer.render(this.scene, this.camera);
+            
             // Try multiple methods in order of preference
             if (this.videoElement && this.compositeCanvas) {
-                this.updateCompositeCanvas();
-                this.captureFromCanvas(this.compositeCanvas, 'composite');
+                // Wait for next frame to ensure render is complete
+                requestAnimationFrame(() => {
+                    this.updateCompositeCanvas();
+                    // Wait one more frame to ensure composite is ready
+                    requestAnimationFrame(() => {
+                        this.captureFromCanvas(this.compositeCanvas, 'composite');
+                    });
+                });
             } else if (this.videoElement) {
                 this.captureFromVideo();
             } else {
-                this.renderer.clear();
-                this.renderer.render(this.scene, this.camera);
                 this.captureFromCanvas(this.renderer.domElement, 'renderer');
             }
             
