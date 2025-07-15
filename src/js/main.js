@@ -26,6 +26,28 @@ class WebARApp {
         this.anchor = null;
         this.isTargetVisible = false;
         
+        // Stabilization properties
+        this.targetPosition = new THREE.Vector3();
+        this.targetRotation = new THREE.Euler();
+        this.smoothingFactor = 0.15; // Lower = smoother, higher = more responsive
+        this.confidenceThreshold = 0.7;
+        this.trackingConfidence = 0;
+        this.lastStableTime = 0;
+        this.stabilizationDelay = 100; // ms
+        this.positionHistory = [];
+        this.rotationHistory = [];
+        this.historySize = 5;
+        
+        // Performance optimization
+        this.lastFrameTime = 0;
+        this.targetFPS = 60;
+        this.frameInterval = 1000 / this.targetFPS;
+        this.performanceMonitor = {
+            frameCount: 0,
+            lastFPSUpdate: 0,
+            currentFPS: 0
+        };
+        
         this.init();
     }
 
@@ -98,8 +120,7 @@ class WebARApp {
             const size = box.getSize(new THREE.Vector3());
             const center = box.getCenter(new THREE.Vector3());
             
-            console.log('Model dimensions:', size);
-            console.log('Model center:', center);
+
             
             // Calculate scale to fit the model within the target bounds
             // Assuming target is roughly 1 unit wide
@@ -125,12 +146,10 @@ class WebARApp {
             
             // Add target tracking events for smooth transitions
             anchor.onTargetFound = () => {
-                console.log('Target found - model appearing');
                 this.onTargetFound();
             };
             
             anchor.onTargetLost = () => {
-                console.log('Target lost - model disappearing');
                 this.onTargetLost();
             };
             
@@ -153,9 +172,7 @@ class WebARApp {
             // Add floating animation
             this.addFloatingAnimation();
 
-            console.log('3D model loaded and positioned successfully');
-            console.log('Final scale:', scale);
-            console.log('Final position:', this.model.position);
+
         } catch (error) {
             console.error('Failed to load 3D model:', error);
             this.showStatus('Failed to load 3D model', true);
@@ -171,10 +188,10 @@ class WebARApp {
         this.floatTime = 0;
         this.rotationTime = 0;
         
-        // Animation parameters for stability
-        this.floatAmplitude = 0.015; // Reduced for more stability
-        this.floatSpeed = 1.5; // Slower floating
-        this.rotationSpeed = 0.3; // Very slow rotation
+        // Animation parameters for stability - reduced to minimize jitter
+        this.floatAmplitude = 0.008; // Further reduced for maximum stability
+        this.floatSpeed = 1.0; // Even slower floating
+        this.rotationSpeed = 0.15; // Minimal rotation for stability
     }
 
     createShadowPlane(parentGroup, modelScale) {
@@ -199,10 +216,20 @@ class WebARApp {
 
     onTargetFound() {
         this.isTargetVisible = true;
+        this.trackingConfidence = 1.0;
+        this.lastStableTime = Date.now();
         
         // Reset animation timing for smooth start
         this.floatTime = 0;
         this.rotationTime = 0;
+        
+        // Initialize stabilization
+        if (this.anchor && this.anchor.group) {
+            this.targetPosition.copy(this.anchor.group.position);
+            this.targetRotation.copy(this.anchor.group.rotation);
+            this.positionHistory = [];
+            this.rotationHistory = [];
+        }
         
         // Smooth fade-in effect for the model
         if (this.model) {
@@ -222,6 +249,11 @@ class WebARApp {
 
     onTargetLost() {
         this.isTargetVisible = false;
+        this.trackingConfidence = 0;
+        
+        // Clear stabilization data
+        this.positionHistory = [];
+        this.rotationHistory = [];
     }
 
     setupUI() {
@@ -245,43 +277,93 @@ class WebARApp {
         });
     }
 
-    showDebugInfo() {
-        console.log('=== DEBUG INFO ===');
-        console.log('Video element:', this.videoElement);
-        console.log('Video playing:', this.videoElement ? !this.videoElement.paused : 'no video');
+    // Stabilization methods
+    updateTrackingStabilization() {
+        if (!this.anchor || !this.anchor.group || !this.isTargetVisible) return;
+
+        const currentTime = Date.now();
+        const anchorGroup = this.anchor.group;
         
-        if (this.videoElement) {
-            const videoAspect = this.videoElement.videoWidth / this.videoElement.videoHeight;
-            console.log('Video dimensions:', `${this.videoElement.videoWidth}x${this.videoElement.videoHeight} (aspect: ${videoAspect.toFixed(2)})`);
+        // Add current position and rotation to history
+        this.addToHistory(this.positionHistory, anchorGroup.position.clone());
+        this.addToHistory(this.rotationHistory, anchorGroup.rotation.clone());
+        
+        // Calculate smoothed position and rotation
+        const smoothedPosition = this.calculateSmoothedPosition();
+        const smoothedRotation = this.calculateSmoothedRotation();
+        
+        // Apply smoothing based on confidence and stability
+        const timeSinceStable = currentTime - this.lastStableTime;
+        const isStable = timeSinceStable > this.stabilizationDelay;
+        
+        if (isStable && this.trackingConfidence > this.confidenceThreshold) {
+            // Apply smoothed values
+            this.targetPosition.lerp(smoothedPosition, this.smoothingFactor);
+            this.targetRotation.x = THREE.MathUtils.lerp(this.targetRotation.x, smoothedRotation.x, this.smoothingFactor);
+            this.targetRotation.y = THREE.MathUtils.lerp(this.targetRotation.y, smoothedRotation.y, this.smoothingFactor);
+            this.targetRotation.z = THREE.MathUtils.lerp(this.targetRotation.z, smoothedRotation.z, this.smoothingFactor);
+            
+            // Apply to anchor group
+            anchorGroup.position.copy(this.targetPosition);
+            anchorGroup.rotation.copy(this.targetRotation);
+        }
+    }
+
+    addToHistory(history, value) {
+        history.push(value);
+        if (history.length > this.historySize) {
+            history.shift();
+        }
+    }
+
+    calculateSmoothedPosition() {
+        if (this.positionHistory.length === 0) return new THREE.Vector3();
+        
+        const smoothed = new THREE.Vector3();
+        let totalWeight = 0;
+        
+        // Weighted average with more recent positions having higher weight
+        for (let i = 0; i < this.positionHistory.length; i++) {
+            const weight = (i + 1) / this.positionHistory.length;
+            smoothed.add(this.positionHistory[i].clone().multiplyScalar(weight));
+            totalWeight += weight;
         }
         
-        console.log('Renderer canvas:', this.renderer.domElement);
-        const rendererAspect = this.renderer.domElement.width / this.renderer.domElement.height;
-        console.log('Renderer canvas size:', `${this.renderer.domElement.width}x${this.renderer.domElement.height} (aspect: ${rendererAspect.toFixed(2)})`);
+        return smoothed.divideScalar(totalWeight);
+    }
+
+    calculateSmoothedRotation() {
+        if (this.rotationHistory.length === 0) return new THREE.Euler();
         
-        console.log('Composite canvas:', this.compositeCanvas);
-        if (this.compositeCanvas) {
-            const compositeAspect = this.compositeCanvas.width / this.compositeCanvas.height;
-            console.log('Composite canvas size:', `${this.compositeCanvas.width}x${this.compositeCanvas.height} (aspect: ${compositeAspect.toFixed(2)})`);
+        // Simple average for rotation (more complex quaternion slerp could be used)
+        const smoothed = new THREE.Euler();
+        let totalWeight = 0;
+        
+        for (let i = 0; i < this.rotationHistory.length; i++) {
+            const weight = (i + 1) / this.rotationHistory.length;
+            smoothed.x += this.rotationHistory[i].x * weight;
+            smoothed.y += this.rotationHistory[i].y * weight;
+            smoothed.z += this.rotationHistory[i].z * weight;
+            totalWeight += weight;
         }
         
-        // Container info
-        const container = document.querySelector('#ar-container');
-        const containerRect = container.getBoundingClientRect();
-        const containerAspect = containerRect.width / containerRect.height;
-        console.log('Container size:', `${containerRect.width}x${containerRect.height} (aspect: ${containerAspect.toFixed(2)})`);
+        smoothed.x /= totalWeight;
+        smoothed.y /= totalWeight;
+        smoothed.z /= totalWeight;
         
-        // Try to capture from different sources
-        const rendererCanvas = this.renderer.domElement;
-        const rendererDataURL = rendererCanvas.toDataURL('image/png').substring(0, 100);
-        console.log('Renderer canvas data preview:', rendererDataURL);
+        return smoothed;
+    }
+
+    updatePerformanceMonitor(currentTime) {
+        this.performanceMonitor.frameCount++;
         
-        if (this.compositeCanvas) {
-            const compositeDataURL = this.compositeCanvas.toDataURL('image/png').substring(0, 100);
-            console.log('Composite canvas data preview:', compositeDataURL);
+        if (currentTime - this.performanceMonitor.lastFPSUpdate >= 1000) {
+            this.performanceMonitor.currentFPS = this.performanceMonitor.frameCount;
+            this.performanceMonitor.frameCount = 0;
+            this.performanceMonitor.lastFPSUpdate = currentTime;
+            
+
         }
-        
-        this.showStatus('Debug info logged to console');
     }
 
     async startAR() {
@@ -294,10 +376,7 @@ class WebARApp {
         // Setup composite canvas for media capture
         this.setupCompositeCanvas();
         
-        // Log canvas information for debugging
-        console.log('Canvas element:', this.renderer.domElement);
-        console.log('Canvas size:', this.renderer.domElement.width, 'x', this.renderer.domElement.height);
-        console.log('Renderer context:', this.renderer.getContext());
+
         
         // Start render loop
         this.render();
@@ -311,7 +390,6 @@ class WebARApp {
             this.videoElement = container.querySelector('video');
             
             if (!this.videoElement) {
-                console.warn('Video element not found, using fallback method');
                 return;
             }
 
@@ -333,7 +411,7 @@ class WebARApp {
                 }, 100);
             });
             
-            console.log('Composite canvas setup with responsive sizing');
+
         }, 1000);
     }
 
@@ -374,24 +452,35 @@ class WebARApp {
         this.compositeCanvas.width = targetWidth;
         this.compositeCanvas.height = targetHeight;
         
-        console.log('Canvas size updated:', {
-            composite: `${this.compositeCanvas.width}x${this.compositeCanvas.height}`,
-            container: `${containerRect.width}x${containerRect.height}`,
-            screen: `${screenWidth}x${screenHeight}`,
-            pixelRatio: pixelRatio
-        });
+
     }
 
     render() {
+        const currentTime = performance.now();
+        
+        // Frame rate control for consistent performance
+        if (currentTime - this.lastFrameTime < this.frameInterval) {
+            requestAnimationFrame(() => this.render());
+            return;
+        }
+        
+        const deltaTime = Math.min((currentTime - this.lastFrameTime) / 1000, 0.033); // Cap at 30fps minimum
+        this.lastFrameTime = currentTime;
+        
+        // Performance monitoring
+        this.updatePerformanceMonitor(currentTime);
+        
         requestAnimationFrame(() => this.render());
         
+        // Update tracking stabilization first
+        this.updateTrackingStabilization();
+        
         if (this.mixer) {
-            this.mixer.update(0.016); // 60fps
+            this.mixer.update(deltaTime);
         }
         
         // Update smooth and stable animations
         if (this.model && this.initialModelY !== undefined) {
-            const deltaTime = 0.016; // 60fps
             
             // Handle fade-in/fade-out based on target visibility
             if (this.isTargetVisible) {
@@ -403,15 +492,18 @@ class WebARApp {
                     }
                 });
                 
-                // Smooth floating animation (only when visible)
+                // Smooth floating animation with easing (only when visible)
                 this.floatTime += deltaTime;
-                const floatOffset = Math.sin(this.floatTime * this.floatSpeed) * this.floatAmplitude;
+                const floatSin = Math.sin(this.floatTime * this.floatSpeed);
+                const easedFloat = floatSin * floatSin * Math.sign(floatSin); // Cubic easing for smoother motion
+                const floatOffset = easedFloat * this.floatAmplitude;
                 this.model.position.y = this.initialModelY + floatOffset;
                 
-                // Smooth rotation animation (very slow to maintain camera-facing)
+                // Minimal rotation animation with damping
                 this.rotationTime += deltaTime;
-                const rotationOffset = Math.sin(this.rotationTime * this.rotationSpeed) * 0.1; // Small rotation variation
-                this.model.rotation.y = this.initialModelRotationY + rotationOffset;
+                const rotationSin = Math.sin(this.rotationTime * this.rotationSpeed);
+                const dampedRotation = rotationSin * 0.05; // Reduced rotation amplitude
+                this.model.rotation.y = this.initialModelRotationY + dampedRotation;
                 
                 // Animate shadow with smoother transitions
                 if (this.shadowPlane) {
@@ -443,11 +535,6 @@ class WebARApp {
 
     updateCompositeCanvas() {
         if (!this.compositeCanvas || !this.videoElement || !this.compositeCtx) {
-            console.log('Missing composite elements:', {
-                canvas: !!this.compositeCanvas,
-                video: !!this.videoElement,
-                ctx: !!this.compositeCtx
-            });
             return;
         }
 
@@ -455,14 +542,7 @@ class WebARApp {
             // Clear composite canvas
             this.compositeCtx.clearRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
             
-            // Check video state
-            console.log('Video state:', {
-                width: this.videoElement.videoWidth,
-                height: this.videoElement.videoHeight,
-                paused: this.videoElement.paused,
-                ended: this.videoElement.ended,
-                readyState: this.videoElement.readyState
-            });
+
             
             // Draw video background
             if (this.videoElement.videoWidth > 0 && this.videoElement.videoHeight > 0 && this.videoElement.readyState >= 2) {
@@ -488,7 +568,7 @@ class WebARApp {
                         this.compositeCanvas.width,
                         this.compositeCanvas.height
                     );
-                    console.log('3D content drawn successfully');
+
                 } catch (error) {
                     console.error('Error drawing 3D content:', error);
                 }
@@ -512,8 +592,7 @@ class WebARApp {
                 canvas.height
             );
             
-            // Log success for debugging
-            console.log('Video drawn successfully');
+
         } catch (error) {
             console.error('Error drawing video:', error);
             
@@ -527,18 +606,13 @@ class WebARApp {
 
     takeScreenshot() {
         try {
-            console.log('Taking screenshot...');
-            
             // Try multiple methods in order of preference
             if (this.videoElement && this.compositeCanvas) {
-                console.log('Trying composite canvas method');
                 this.updateCompositeCanvas();
                 this.captureFromCanvas(this.compositeCanvas, 'composite');
             } else if (this.videoElement) {
-                console.log('Trying direct video capture method');
                 this.captureFromVideo();
             } else {
-                console.log('Using renderer canvas fallback');
                 this.renderer.clear();
                 this.renderer.render(this.scene, this.camera);
                 this.captureFromCanvas(this.renderer.domElement, 'renderer');
@@ -554,7 +628,6 @@ class WebARApp {
         requestAnimationFrame(() => {
             try {
                 const dataURL = canvas.toDataURL('image/png', 1.0);
-                console.log(`${method} canvas data URL length:`, dataURL.length);
                 
                 if (dataURL.length < 1000) {
                     throw new Error(`${method} canvas appears to be empty`);
@@ -581,7 +654,6 @@ class WebARApp {
             tempCtx.drawImage(this.videoElement, 0, 0, tempCanvas.width, tempCanvas.height);
             
             const dataURL = tempCanvas.toDataURL('image/png', 1.0);
-            console.log('Video capture data URL length:', dataURL.length);
             
             if (dataURL.length < 1000) {
                 throw new Error('Video capture appears to be empty');
@@ -615,7 +687,6 @@ class WebARApp {
             
             // Use composite canvas if available, otherwise fallback
             if (!canvasToRecord || !this.videoElement) {
-                console.log('Using fallback method for recording');
                 canvasToRecord = this.renderer.domElement;
             }
             
@@ -651,8 +722,7 @@ class WebARApp {
                 throw new Error('No video tracks available');
             }
             
-            console.log('Recording canvas:', canvasToRecord === this.compositeCanvas ? 'composite' : 'renderer');
-            console.log('Stream tracks:', stream.getVideoTracks().length);
+
             
             this.mediaRecorder = new MediaRecorder(stream, {
                 mimeType: selectedMimeType,
@@ -664,12 +734,10 @@ class WebARApp {
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
                     this.recordedChunks.push(event.data);
-                    console.log('Recording chunk:', event.data.size, 'bytes');
                 }
             };
 
             this.mediaRecorder.onstop = () => {
-                console.log('Recording stopped, chunks:', this.recordedChunks.length);
                 this.saveRecording();
             };
 
@@ -689,7 +757,6 @@ class WebARApp {
             document.getElementById('stop-record-btn').classList.add('recording');
             
             this.showStatus('Recording started');
-            console.log('Recording started with MIME type:', selectedMimeType);
             
         } catch (error) {
             console.error('Recording failed to start:', error);
@@ -718,8 +785,6 @@ class WebARApp {
             if (!this.recordedChunks.length) {
                 throw new Error('No recording data available');
             }
-
-            console.log('Saving recording with', this.recordedChunks.length, 'chunks');
             
             // Determine file extension based on the first chunk's type
             const firstChunk = this.recordedChunks[0];
@@ -734,7 +799,6 @@ class WebARApp {
             }
             
             const blob = new Blob(this.recordedChunks, { type: mimeType });
-            console.log('Created blob:', blob.size, 'bytes, type:', blob.type);
             
             if (blob.size === 0) {
                 throw new Error('Recording is empty');
