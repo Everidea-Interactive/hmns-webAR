@@ -16,8 +16,15 @@ class WebARApp {
         this.compositeCanvas = null;
         this.compositeCtx = null;
         this.initialModelY = undefined;
+        this.initialModelRotationY = undefined;
         this.floatTime = 0;
+        this.rotationTime = 0;
         this.shadowPlane = null;
+        this.floatAmplitude = 0.015;
+        this.floatSpeed = 1.5;
+        this.rotationSpeed = 0.3;
+        this.anchor = null;
+        this.isTargetVisible = false;
         
         this.init();
     }
@@ -107,19 +114,33 @@ class WebARApp {
             this.model.position.set(
                 -center.x * scale, // Center horizontally
                 -center.y * scale + size.y * scale * 0.5, // Place on top of target
-                0.01 // Slightly above the target plane
+                0.02 // Slightly above the target plane for stability
             );
             
-            // Optional: Add slight rotation for better viewing angle
-            this.model.rotation.y = Math.PI * 0.1; // 18 degrees
+            // Keep original rotation (no rotation override)
+            // this.model.rotation.y = Math.PI;
             
-            // Add model to anchor
+            // Add model to anchor with event listeners for stability
             const anchor = this.mindarThree.addAnchor(0);
+            
+            // Add target tracking events for smooth transitions
+            anchor.onTargetFound = () => {
+                console.log('Target found - model appearing');
+                this.onTargetFound();
+            };
+            
+            anchor.onTargetLost = () => {
+                console.log('Target lost - model disappearing');
+                this.onTargetLost();
+            };
             
             // Create a subtle shadow plane
             this.createShadowPlane(anchor.group, scale);
             
             anchor.group.add(this.model);
+            
+            // Store anchor reference
+            this.anchor = anchor;
 
             // Add animations if available
             if (gltf.animations && gltf.animations.length > 0) {
@@ -144,9 +165,16 @@ class WebARApp {
     addFloatingAnimation() {
         if (!this.model) return;
         
-        // Store initial position for floating animation
+        // Store initial position and rotation for stable animation
         this.initialModelY = this.model.position.y;
+        this.initialModelRotationY = this.model.rotation.y;
         this.floatTime = 0;
+        this.rotationTime = 0;
+        
+        // Animation parameters for stability
+        this.floatAmplitude = 0.015; // Reduced for more stability
+        this.floatSpeed = 1.5; // Slower floating
+        this.rotationSpeed = 0.3; // Very slow rotation
     }
 
     createShadowPlane(parentGroup, modelScale) {
@@ -167,6 +195,33 @@ class WebARApp {
         
         // Store reference for animation
         this.shadowPlane = shadowPlane;
+    }
+
+    onTargetFound() {
+        this.isTargetVisible = true;
+        
+        // Reset animation timing for smooth start
+        this.floatTime = 0;
+        this.rotationTime = 0;
+        
+        // Smooth fade-in effect for the model
+        if (this.model) {
+            this.model.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    // Store original opacity
+                    if (!child.material.userData.originalOpacity) {
+                        child.material.userData.originalOpacity = child.material.opacity || 1.0;
+                    }
+                    // Start from transparent
+                    child.material.transparent = true;
+                    child.material.opacity = 0;
+                }
+            });
+        }
+    }
+
+    onTargetLost() {
+        this.isTargetVisible = false;
     }
 
     setupUI() {
@@ -334,20 +389,48 @@ class WebARApp {
             this.mixer.update(0.016); // 60fps
         }
         
-        // Update floating animation
+        // Update smooth and stable animations
         if (this.model && this.initialModelY !== undefined) {
-            this.floatTime += 0.016;
-            const floatOffset = Math.sin(this.floatTime * 2) * 0.02; // Gentle floating motion
-            this.model.position.y = this.initialModelY + floatOffset;
+            const deltaTime = 0.016; // 60fps
             
-            // Animate shadow opacity based on height
-            if (this.shadowPlane) {
-                const shadowOpacity = 0.3 - (floatOffset * 2); // Shadow gets lighter as model floats up
-                this.shadowPlane.material.opacity = Math.max(0.1, shadowOpacity);
+            // Handle fade-in/fade-out based on target visibility
+            if (this.isTargetVisible) {
+                // Fade in model when target is found
+                this.model.traverse((child) => {
+                    if (child.isMesh && child.material && child.material.userData.originalOpacity) {
+                        const targetOpacity = child.material.userData.originalOpacity;
+                        child.material.opacity = Math.min(targetOpacity, child.material.opacity + deltaTime * 3); // 3x speed fade in
+                    }
+                });
+                
+                // Smooth floating animation (only when visible)
+                this.floatTime += deltaTime;
+                const floatOffset = Math.sin(this.floatTime * this.floatSpeed) * this.floatAmplitude;
+                this.model.position.y = this.initialModelY + floatOffset;
+                
+                // Smooth rotation animation (very slow to maintain camera-facing)
+                this.rotationTime += deltaTime;
+                const rotationOffset = Math.sin(this.rotationTime * this.rotationSpeed) * 0.1; // Small rotation variation
+                this.model.rotation.y = this.initialModelRotationY + rotationOffset;
+                
+                // Animate shadow with smoother transitions
+                if (this.shadowPlane) {
+                    const normalizedFloat = (floatOffset / this.floatAmplitude); // -1 to 1
+                    const shadowOpacity = 0.25 - (normalizedFloat * 0.1); // More subtle shadow changes
+                    this.shadowPlane.material.opacity = Math.max(0.15, Math.min(0.35, shadowOpacity));
+                    
+                    // Slightly scale shadow based on height (perspective effect)
+                    const shadowScale = 1.0 - (normalizedFloat * 0.05);
+                    this.shadowPlane.scale.set(shadowScale, shadowScale, shadowScale);
+                }
+            } else {
+                // Fade out model when target is lost
+                this.model.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        child.material.opacity = Math.max(0, child.material.opacity - deltaTime * 2); // 2x speed fade out
+                    }
+                });
             }
-            
-            // Optional: Add gentle rotation
-            this.model.rotation.y += 0.005; // Slow rotation
         }
         
         // Clear and render for proper media capture
