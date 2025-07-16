@@ -542,16 +542,36 @@ class WebARApp {
                 this.compositeCtx.fillText('Video Loading...', this.compositeCanvas.width / 2, this.compositeCanvas.height / 2);
             }
             
-            // Draw 3D content on top
+            // Draw 3D content on top with proper aspect ratio
             const rendererCanvas = this.renderer.domElement;
             if (rendererCanvas.width > 0 && rendererCanvas.height > 0) {
                 this.compositeCtx.globalCompositeOperation = 'source-over';
                 this.compositeCtx.globalAlpha = 1.0;
                 try {
+                    // Calculate aspect ratios for 3D content
+                    const rendererAspect = rendererCanvas.width / rendererCanvas.height;
+                    const canvasAspect = this.compositeCanvas.width / this.compositeCanvas.height;
+                    
+                    let drawWidth, drawHeight, offsetX, offsetY;
+                    
+                    if (rendererAspect > canvasAspect) {
+                        // Renderer is wider than canvas - fit to width
+                        drawWidth = this.compositeCanvas.width;
+                        drawHeight = this.compositeCanvas.width / rendererAspect;
+                        offsetX = 0;
+                        offsetY = (this.compositeCanvas.height - drawHeight) / 2;
+                    } else {
+                        // Renderer is taller than canvas - fit to height
+                        drawHeight = this.compositeCanvas.height;
+                        drawWidth = this.compositeCanvas.height * rendererAspect;
+                        offsetX = (this.compositeCanvas.width - drawWidth) / 2;
+                        offsetY = 0;
+                    }
+                    
                     this.compositeCtx.drawImage(
                         rendererCanvas,
                         0, 0, rendererCanvas.width, rendererCanvas.height,
-                        0, 0, this.compositeCanvas.width, this.compositeCanvas.height
+                        offsetX, offsetY, drawWidth, drawHeight
                     );
 
                 } catch (error) {
@@ -569,12 +589,36 @@ class WebARApp {
         const ctx = this.compositeCtx;
 
         try {
-            // Simple approach first - just draw the video
+            // Calculate aspect ratios
+            const videoAspect = video.videoWidth / video.videoHeight;
+            const canvasAspect = canvas.width / canvas.height;
+            
+            let drawWidth, drawHeight, offsetX, offsetY;
+            
+            if (videoAspect > canvasAspect) {
+                // Video is wider than canvas - fit to width
+                drawWidth = canvas.width;
+                drawHeight = canvas.width / videoAspect;
+                offsetX = 0;
+                offsetY = (canvas.height - drawHeight) / 2;
+            } else {
+                // Video is taller than canvas - fit to height
+                drawHeight = canvas.height;
+                drawWidth = canvas.height * videoAspect;
+                offsetX = (canvas.width - drawWidth) / 2;
+                offsetY = 0;
+            }
+            
+            // Fill background with black
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw video with proper aspect ratio
             ctx.drawImage(
                 video,
-                0, 0,
-                canvas.width,
-                canvas.height
+                offsetX, offsetY,
+                drawWidth,
+                drawHeight
             );
             
 
@@ -646,10 +690,49 @@ class WebARApp {
             const containerRect = container.getBoundingClientRect();
             const pixelRatio = window.devicePixelRatio || 1;
             
-            tempCanvas.width = this.videoElement.videoWidth || (containerRect.width * pixelRatio);
-            tempCanvas.height = this.videoElement.videoHeight || (containerRect.height * pixelRatio);
+            // Use video's native dimensions for best quality
+            const videoWidth = this.videoElement.videoWidth;
+            const videoHeight = this.videoElement.videoHeight;
             
-            tempCtx.drawImage(this.videoElement, 0, 0, tempCanvas.width, tempCanvas.height);
+            if (videoWidth && videoHeight) {
+                // Use video's native resolution
+                tempCanvas.width = videoWidth;
+                tempCanvas.height = videoHeight;
+                
+                // Draw video at native resolution
+                tempCtx.drawImage(this.videoElement, 0, 0, videoWidth, videoHeight);
+            } else {
+                // Fallback to container size with aspect ratio preservation
+                const containerWidth = containerRect.width * pixelRatio;
+                const containerHeight = containerRect.height * pixelRatio;
+                
+                tempCanvas.width = containerWidth;
+                tempCanvas.height = containerHeight;
+                
+                // Fill with black background
+                tempCtx.fillStyle = '#000000';
+                tempCtx.fillRect(0, 0, containerWidth, containerHeight);
+                
+                // Draw video with aspect ratio preservation
+                const videoAspect = this.videoElement.videoWidth / this.videoElement.videoHeight;
+                const canvasAspect = containerWidth / containerHeight;
+                
+                let drawWidth, drawHeight, offsetX, offsetY;
+                
+                if (videoAspect > canvasAspect) {
+                    drawWidth = containerWidth;
+                    drawHeight = containerWidth / videoAspect;
+                    offsetX = 0;
+                    offsetY = (containerHeight - drawHeight) / 2;
+                } else {
+                    drawHeight = containerHeight;
+                    drawWidth = containerHeight * videoAspect;
+                    offsetX = (containerWidth - drawWidth) / 2;
+                    offsetY = 0;
+                }
+                
+                tempCtx.drawImage(this.videoElement, offsetX, offsetY, drawWidth, drawHeight);
+            }
             
             const dataURL = tempCanvas.toDataURL('image/png', 1.0);
             
