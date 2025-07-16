@@ -662,8 +662,8 @@ class WebARApp {
         this.renderer.clear();
         this.renderer.render(this.scene, this.camera);
         
-        // Update composite canvas if available and recording is active
-        if (this.isRecording || this.compositeCanvas) {
+        // Always update composite canvas to ensure continuous recording
+        if (this.compositeCanvas) {
             this.updateCompositeCanvas();
         }
     }
@@ -695,48 +695,24 @@ class WebARApp {
                 }
             }
             
-            // Enhanced video readiness check with mobile-specific handling
-            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            // Simplified video readiness check
+            const isVideoReady = this.videoElement && 
+                               this.videoElement.videoWidth > 0 && 
+                               this.videoElement.videoHeight > 0;
             
-            let isVideoReady = false;
-            
-            if (isMobile) {
-                // More lenient check for mobile devices
-                isVideoReady = this.videoElement && 
-                              this.videoElement.videoWidth > 0 && 
-                              this.videoElement.videoHeight > 0;
-                
-                // For mobile, also try to draw if we have any video data
-                if (!isVideoReady && this.videoElement && this.videoElement.readyState >= 1) {
-                    isVideoReady = true;
-                }
-            } else {
-                // Standard check for desktop
-                isVideoReady = this.videoElement && 
-                              this.videoElement.videoWidth > 0 && 
-                              this.videoElement.videoHeight > 0 && 
-                              this.videoElement.readyState >= 2;
-            }
-            
-            console.log(`Video status (${isMobile ? 'mobile' : 'desktop'}): width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
+            console.log(`Video status: width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
             
             // Draw video background
             if (isVideoReady) {
                 this.drawVideoWithAspectRatio();
             } else {
-                // For mobile, try to draw video even if not fully ready
-                if (isMobile && this.videoElement && this.videoElement.readyState >= 1) {
-                    console.log('Mobile: Attempting to draw video with partial data...');
-                    this.drawVideoWithAspectRatio();
-                } else {
-                    // Draw a placeholder if video isn't ready
-                    this.compositeCtx.fillStyle = '#333333';
-                    this.compositeCtx.fillRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
-                    this.compositeCtx.fillStyle = '#ffffff';
-                    this.compositeCtx.font = '20px Arial';
-                    this.compositeCtx.textAlign = 'center';
-                    this.compositeCtx.fillText('Video Loading...', this.compositeCanvas.width / 2, this.compositeCanvas.height / 2);
-                }
+                // Draw a placeholder if video isn't ready
+                this.compositeCtx.fillStyle = '#333333';
+                this.compositeCtx.fillRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
+                this.compositeCtx.fillStyle = '#ffffff';
+                this.compositeCtx.font = '20px Arial';
+                this.compositeCtx.textAlign = 'center';
+                this.compositeCtx.fillText('Video Loading...', this.compositeCanvas.width / 2, this.compositeCanvas.height / 2);
             }
             
             // Draw 3D content on top with proper aspect ratio
@@ -771,7 +747,10 @@ class WebARApp {
                         offsetX, offsetY, drawWidth, drawHeight
                     );
                     
-                    console.log(`3D content drawn: ${drawWidth}x${drawHeight} at (${offsetX}, ${offsetY})`);
+                    // Only log 3D content drawing during recording for debugging
+                    if (this.isRecording) {
+                        console.log(`3D content drawn: ${drawWidth}x${drawHeight} at (${offsetX}, ${offsetY})`);
+                    }
 
                 } catch (error) {
                     console.error('Error drawing 3D content:', error);
@@ -828,7 +807,10 @@ class WebARApp {
                 drawHeight
             );
             
-            console.log(`Video drawn: ${drawWidth}x${drawHeight} at (${offsetX}, ${offsetY})`);
+            // Only log video drawing during recording for debugging
+            if (this.isRecording) {
+                console.log(`Video drawn: ${drawWidth}x${drawHeight} at (${offsetX}, ${offsetY})`);
+            }
 
         } catch (error) {
             console.error('Error drawing video:', error);
@@ -1014,12 +996,9 @@ class WebARApp {
             
             let canvasToRecord = this.compositeCanvas;
             
-            // Enhanced fallback logic with mobile-specific handling
+            // Simplified canvas selection - always use composite canvas if available
             if (!canvasToRecord) {
-                console.log(`Composite canvas not available, using renderer canvas (${isMobile ? 'mobile' : 'desktop'})`);
-                canvasToRecord = this.renderer.domElement;
-            } else if (!this.videoElement || (this.videoElement.videoWidth === 0 && this.videoElement.videoHeight === 0)) {
-                console.log(`Video not available, using renderer canvas as fallback (${isMobile ? 'mobile' : 'desktop'})`);
+                console.log('Composite canvas not available, using renderer canvas');
                 canvasToRecord = this.renderer.domElement;
             }
             
@@ -1062,6 +1041,12 @@ class WebARApp {
                 }
             }
             
+            // Ensure we have a valid MIME type
+            if (!selectedMimeType) {
+                console.log('No supported MIME type found, using default');
+                selectedMimeType = 'video/webm';
+            }
+            
             console.log(`Selected MIME type: ${selectedMimeType} (${isMobile ? 'mobile' : 'desktop'})`);
             
             if (!selectedMimeType) {
@@ -1092,7 +1077,7 @@ class WebARApp {
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
                     this.recordedChunks.push(event.data);
-                    console.log(`Recording chunk received: ${event.data.size} bytes`);
+                    console.log(`Recording chunk received: ${event.data.size} bytes, total chunks: ${this.recordedChunks.length}`);
                 }
             };
 
@@ -1107,8 +1092,8 @@ class WebARApp {
                 this.resetRecordingUI();
             };
 
-            // Start recording with smaller timeslice for better reliability on mobile
-            this.mediaRecorder.start(500); // 500ms chunks for better mobile compatibility
+            // Start recording with smaller timeslice for better frame capture
+            this.mediaRecorder.start(100); // 100ms chunks for better continuous recording
             this.isRecording = true;
             
             // Update UI
@@ -1164,6 +1149,7 @@ class WebARApp {
             }
             
             // Determine file extension and MIME type based on the MediaRecorder's MIME type
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
             let fileExtension = 'mp4';
             let mimeType = 'video/mp4';
             
@@ -1172,20 +1158,31 @@ class WebARApp {
                 console.log(`MediaRecorder actual MIME type: ${this.mediaRecorder.mimeType}`);
                 
                 if (recorderMimeType.includes('webm')) {
-                    fileExtension = 'webm';
-                    mimeType = 'video/webm';
+                    if (isMobile) {
+                        // Force MP4 for mobile even if MediaRecorder uses WebM
+                        console.log('Mobile device: Converting WebM to MP4 format');
+                        fileExtension = 'mp4';
+                        mimeType = 'video/mp4';
+                    } else {
+                        fileExtension = 'webm';
+                        mimeType = 'video/webm';
+                    }
                 } else if (recorderMimeType.includes('mp4')) {
                     fileExtension = 'mp4';
                     mimeType = 'video/mp4';
                 } else {
                     // Fallback: check if we're on mobile and force MP4
-                    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
                     if (isMobile) {
                         console.log('Mobile device detected, forcing MP4 format');
                         fileExtension = 'mp4';
                         mimeType = 'video/mp4';
                     }
                 }
+            } else if (isMobile) {
+                // No MIME type specified, force MP4 for mobile
+                console.log('Mobile device: No MIME type specified, forcing MP4 format');
+                fileExtension = 'mp4';
+                mimeType = 'video/mp4';
             }
             
             console.log(`Using MIME type: ${mimeType}, file extension: ${fileExtension}`);
