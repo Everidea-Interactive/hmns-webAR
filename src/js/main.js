@@ -12,6 +12,10 @@ class WebARApp {
         this.mediaRecorder = null;
         this.recordedChunks = [];
         this.isRecording = false;
+        this.fallbackRecording = false;
+        this.fallbackFrames = [];
+        this.fallbackInterval = null;
+        this.recordingTimeout = null;
         this.videoElement = null;
         this.compositeCanvas = null;
         this.compositeCtx = null;
@@ -920,22 +924,32 @@ class WebARApp {
                 throw new Error('No video tracks available');
             }
             
-
-            
             this.mediaRecorder = new MediaRecorder(stream, {
                 mimeType: selectedMimeType,
                 videoBitsPerSecond: 2500000 // 2.5 Mbps
             });
 
             this.recordedChunks = [];
+            this.recordingStartTime = Date.now();
+            this.lastDataTime = Date.now();
+            this.dataReceived = false;
+            this.recordingAttempts = 0;
             
             this.mediaRecorder.ondataavailable = (event) => {
+                console.log('Data available event triggered:', event.data ? event.data.size : 'no data');
+                this.lastDataTime = Date.now();
+                
                 if (event.data && event.data.size > 0) {
                     this.recordedChunks.push(event.data);
+                    this.dataReceived = true;
+                    console.log('Chunk added, total chunks:', this.recordedChunks.length);
+                } else {
+                    console.warn('Data available event with empty or null data');
                 }
             };
 
             this.mediaRecorder.onstop = () => {
+                console.log('Recording stopped, chunks received:', this.recordedChunks.length);
                 this.saveRecording();
             };
 
@@ -945,9 +959,20 @@ class WebARApp {
                 this.resetRecordingUI();
             };
 
-            // Start recording with smaller timeslice for better reliability
-            this.mediaRecorder.start(1000); // 1 second chunks
+            this.mediaRecorder.onstart = () => {
+                console.log('Recording started successfully');
+                this.dataReceived = false;
+            };
+
+            // Start recording with smaller timeslice for better reliability on mobile
+            // Use 500ms chunks for more frequent data collection
+            this.mediaRecorder.start(500);
             this.isRecording = true;
+            
+            // Set up a safety timeout to check for data
+            this.recordingTimeout = setTimeout(() => {
+                this.checkRecordingHealth();
+            }, 2000);
             
             // Update UI
             document.getElementById('record-btn').classList.add('hidden');
@@ -963,12 +988,277 @@ class WebARApp {
         }
     }
 
+    checkRecordingHealth() {
+        if (!this.isRecording) return;
+        
+        const now = Date.now();
+        const timeSinceLastData = now - this.lastDataTime;
+        const recordingDuration = now - this.recordingStartTime;
+        
+        console.log('Recording health check:', {
+            chunks: this.recordedChunks.length,
+            dataReceived: this.dataReceived,
+            timeSinceLastData,
+            recordingDuration
+        });
+        
+        // If no data received after 3 seconds, try to restart recording
+        if (!this.dataReceived && recordingDuration > 3000) {
+            this.recordingAttempts++;
+            console.warn('No recording data received, attempting restart...', this.recordingAttempts);
+            
+            if (this.recordingAttempts >= 2) {
+                // Try fallback recording method after 2 failed attempts
+                console.log('Trying fallback recording method...');
+                this.stopRecording();
+                setTimeout(() => {
+                    this.startFallbackRecording();
+                }, 500);
+                return;
+            }
+            
+            this.stopRecording();
+            setTimeout(() => {
+                this.showStatus('Recording restarted due to no data', false);
+                this.startRecording();
+            }, 500);
+            return;
+        }
+        
+        // If data was received but no new data for 5 seconds, warn user
+        if (this.dataReceived && timeSinceLastData > 5000) {
+            console.warn('No new recording data for 5 seconds');
+            this.showStatus('Recording may be paused', false);
+        }
+        
+        // Continue monitoring if still recording
+        if (this.isRecording) {
+            this.recordingTimeout = setTimeout(() => {
+                this.checkRecordingHealth();
+            }, 2000);
+        }
+    }
+
+    startFallbackRecording() {
+        try {
+            console.log('Starting fallback recording method...');
+            this.showStatus('Using fallback recording method', false);
+            
+            // Fallback: Use frame-by-frame capture for mobile devices
+            this.fallbackFrames = [];
+            this.fallbackRecording = true;
+            this.fallbackStartTime = Date.now();
+            
+            // Capture frames at 10 FPS for fallback recording
+            this.fallbackInterval = setInterval(() => {
+                if (this.fallbackRecording) {
+                    this.captureFallbackFrame();
+                }
+            }, 100); // 10 FPS
+            
+            // Update UI
+            document.getElementById('record-btn').classList.add('hidden');
+            document.getElementById('stop-record-btn').classList.remove('hidden');
+            document.getElementById('stop-record-btn').classList.add('recording');
+            
+        } catch (error) {
+            console.error('Fallback recording failed:', error);
+            this.showStatus('Fallback recording failed', true);
+            this.resetRecordingUI();
+        }
+    }
+
+    captureFallbackFrame() {
+        try {
+            let canvasToCapture = this.compositeCanvas || this.renderer.domElement;
+            
+            if (!canvasToCapture) {
+                console.warn('No canvas available for fallback frame capture');
+                return;
+            }
+            
+            // Create a temporary canvas to capture the frame
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Set canvas size
+            tempCanvas.width = canvasToCapture.width;
+            tempCanvas.height = canvasToCapture.height;
+            
+            // Draw the current frame
+            tempCtx.drawImage(canvasToCapture, 0, 0);
+            
+            // Convert to blob
+            tempCanvas.toBlob((blob) => {
+                if (blob) {
+                    this.fallbackFrames.push(blob);
+                    console.log('Fallback frame captured, total frames:', this.fallbackFrames.length);
+                }
+            }, 'image/png', 0.8);
+            
+        } catch (error) {
+            console.error('Error capturing fallback frame:', error);
+        }
+    }
+
+    stopFallbackRecording() {
+        if (this.fallbackRecording) {
+            this.fallbackRecording = false;
+            
+            if (this.fallbackInterval) {
+                clearInterval(this.fallbackInterval);
+                this.fallbackInterval = null;
+            }
+            
+            console.log('Fallback recording stopped, frames captured:', this.fallbackFrames.length);
+            
+            if (this.fallbackFrames.length > 0) {
+                this.saveFallbackRecording();
+            } else {
+                this.showStatus('No frames captured in fallback recording', true);
+            }
+        }
+    }
+
+    saveFallbackRecording() {
+        try {
+            console.log('Saving fallback recording with', this.fallbackFrames.length, 'frames');
+            
+            // Create a video from the captured frames
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Set canvas size (use first frame as reference)
+            const firstFrame = this.fallbackFrames[0];
+            const img = new Image();
+            
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                
+                // Create a video stream from the frames
+                const stream = canvas.captureStream(10); // 10 FPS
+                const mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'video/webm'
+                });
+                
+                const chunks = [];
+                let frameIndex = 0;
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0) {
+                        chunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    if (chunks.length > 0) {
+                        const blob = new Blob(chunks, { type: 'video/webm' });
+                        this.downloadRecording(blob, 'webm');
+                    } else {
+                        this.showStatus('Fallback recording failed to create video', true);
+                    }
+                };
+                
+                mediaRecorder.start();
+                
+                // Draw frames to create video
+                const drawNextFrame = () => {
+                    if (frameIndex < this.fallbackFrames.length) {
+                        const frame = this.fallbackFrames[frameIndex];
+                        const img = new Image();
+                        
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0);
+                            frameIndex++;
+                            setTimeout(drawNextFrame, 100); // 10 FPS
+                        };
+                        
+                        img.src = URL.createObjectURL(frame);
+                    } else {
+                        mediaRecorder.stop();
+                    }
+                };
+                
+                drawNextFrame();
+            };
+            
+            img.src = URL.createObjectURL(firstFrame);
+            
+        } catch (error) {
+            console.error('Failed to save fallback recording:', error);
+            this.showStatus('Fallback recording save failed', true);
+        } finally {
+            // Clean up
+            this.fallbackFrames = [];
+        }
+    }
+
+    downloadRecording(blob, extension) {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = `webAR-recording-${Date.now()}.${extension}`;
+        link.href = url;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => {
+            URL.revokeObjectURL(url);
+        }, 1000);
+        
+        this.showStatus('Recording saved!');
+    }
+
     stopRecording() {
+        // Handle fallback recording
+        if (this.fallbackRecording) {
+            this.stopFallbackRecording();
+            this.resetRecordingUI();
+            this.showStatus('Recording stopped');
+            return;
+        }
+        
         if (this.mediaRecorder && this.isRecording) {
-            this.mediaRecorder.stop();
+            // Clear the health check timeout
+            if (this.recordingTimeout) {
+                clearTimeout(this.recordingTimeout);
+                this.recordingTimeout = null;
+            }
+            
+            try {
+                this.mediaRecorder.stop();
+            } catch (error) {
+                console.error('Error stopping MediaRecorder:', error);
+                // Force cleanup even if stop fails
+                this.forceStopRecording();
+            }
+            
             this.isRecording = false;
             this.resetRecordingUI();
             this.showStatus('Recording stopped');
+        }
+    }
+
+    forceStopRecording() {
+        // Force cleanup when MediaRecorder.stop() fails
+        if (this.mediaRecorder) {
+            try {
+                this.mediaRecorder.ondataavailable = null;
+                this.mediaRecorder.onstop = null;
+                this.mediaRecorder.onerror = null;
+                this.mediaRecorder.onstart = null;
+            } catch (e) {
+                console.warn('Error cleaning up MediaRecorder:', e);
+            }
+            this.mediaRecorder = null;
+        }
+        
+        // If we have any chunks, try to save them
+        if (this.recordedChunks.length > 0) {
+            this.saveRecording();
+        } else {
+            this.showStatus('Recording failed - no data captured', true);
         }
     }
 
@@ -976,20 +1266,54 @@ class WebARApp {
         document.getElementById('record-btn').classList.remove('hidden', 'recording');
         document.getElementById('stop-record-btn').classList.add('hidden', 'recording');
         this.isRecording = false;
+        this.fallbackRecording = false;
+        
+        // Clear any pending timeouts
+        if (this.recordingTimeout) {
+            clearTimeout(this.recordingTimeout);
+            this.recordingTimeout = null;
+        }
+        
+        // Clear fallback recording
+        if (this.fallbackInterval) {
+            clearInterval(this.fallbackInterval);
+            this.fallbackInterval = null;
+        }
+        
+        // Clear fallback frames
+        if (this.fallbackFrames) {
+            this.fallbackFrames = [];
+        }
     }
 
     saveRecording() {
         try {
+            console.log('Attempting to save recording with', this.recordedChunks.length, 'chunks');
+            
             if (!this.recordedChunks.length) {
                 throw new Error('No recording data available');
             }
+            
+            // Check if chunks have actual data
+            let totalSize = 0;
+            for (const chunk of this.recordedChunks) {
+                if (chunk && chunk.size) {
+                    totalSize += chunk.size;
+                }
+            }
+            
+            if (totalSize === 0) {
+                throw new Error('All recording chunks are empty');
+            }
+            
+            console.log('Total recording size:', totalSize, 'bytes');
             
             // Determine file extension based on the first chunk's type
             const firstChunk = this.recordedChunks[0];
             let fileExtension = 'webm';
             let mimeType = 'video/webm';
             
-            if (firstChunk.type) {
+            if (firstChunk && firstChunk.type) {
                 if (firstChunk.type.includes('mp4')) {
                     fileExtension = 'mp4';
                     mimeType = 'video/mp4';
@@ -999,8 +1323,10 @@ class WebARApp {
             const blob = new Blob(this.recordedChunks, { type: mimeType });
             
             if (blob.size === 0) {
-                throw new Error('Recording is empty');
+                throw new Error('Recording blob is empty');
             }
+            
+            console.log('Blob created successfully, size:', blob.size);
             
             const url = URL.createObjectURL(blob);
             
@@ -1023,6 +1349,9 @@ class WebARApp {
         } catch (error) {
             console.error('Failed to save recording:', error);
             this.showStatus(`Save failed: ${error.message}`, true);
+            
+            // Clear chunks on error to prevent memory leaks
+            this.recordedChunks = [];
         }
     }
 
@@ -1041,4 +1370,4 @@ class WebARApp {
 // Initialize the WebAR application when the page loads
 document.addEventListener('DOMContentLoaded', () => {
     new WebARApp();
-}); 
+});
