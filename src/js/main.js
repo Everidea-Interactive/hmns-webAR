@@ -48,6 +48,10 @@ class WebARApp {
             currentFPS: 0
         };
         
+        // App state tracking
+        this.isAppActive = true;
+        this.resizeListenerAdded = false;
+        
         this.init();
     }
 
@@ -271,6 +275,81 @@ class WebARApp {
         document.getElementById('stop-record-btn').addEventListener('click', () => {
             this.stopRecording();
         });
+
+        // Add visibility and focus event handlers for app switching
+        this.setupVisibilityHandlers();
+    }
+
+    setupVisibilityHandlers() {
+        // Handle page visibility changes (switching apps)
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                this.onAppResume();
+            } else {
+                this.onAppPause();
+            }
+        });
+
+        // Handle window focus/blur events
+        window.addEventListener('focus', () => {
+            this.onAppResume();
+        });
+
+        window.addEventListener('blur', () => {
+            this.onAppPause();
+        });
+
+        // Handle page show/hide events (iOS Safari)
+        window.addEventListener('pageshow', () => {
+            this.onAppResume();
+        });
+
+        window.addEventListener('pagehide', () => {
+            this.onAppPause();
+        });
+    }
+
+    onAppPause() {
+        // App is being suspended - pause rendering to save resources
+        this.isAppActive = false;
+        console.log('App paused - suspending rendering');
+    }
+
+    async onAppResume() {
+        // App is resuming - reinitialize video and canvas
+        this.isAppActive = true;
+        console.log('App resumed - reinitializing video and canvas');
+        
+        // Wait a bit for the browser to fully restore
+        setTimeout(async () => {
+            await this.reinitializeVideoAndCanvas();
+        }, 500);
+    }
+
+    async reinitializeVideoAndCanvas() {
+        try {
+            // Re-setup composite canvas
+            this.setupCompositeCanvas();
+            
+            // Force a render to ensure everything is working
+            if (this.renderer && this.scene && this.camera) {
+                this.renderer.clear();
+                this.renderer.render(this.scene, this.camera);
+            }
+            
+            // Update canvas size to match current container
+            this.updateCanvasSize();
+            
+            // Check if MindAR needs to be restarted
+            if (this.mindarThree && !this.mindarThree.isStarted) {
+                console.log('Restarting MindAR...');
+                await this.mindarThree.start();
+            }
+            
+            console.log('Video and canvas reinitialized successfully');
+        } catch (error) {
+            console.error('Failed to reinitialize video and canvas:', error);
+        }
     }
 
     // Stabilization methods
@@ -377,6 +456,13 @@ class WebARApp {
     }
 
     setupCompositeCanvas() {
+        // Clear existing canvas if reinitializing
+        if (this.compositeCanvas) {
+            this.compositeCanvas.remove();
+            this.compositeCanvas = null;
+            this.compositeCtx = null;
+        }
+
         // Wait a bit for MindAR to fully initialize
         setTimeout(() => {
             // Get the video element from MindAR
@@ -384,6 +470,9 @@ class WebARApp {
             this.videoElement = container.querySelector('video');
             
             if (!this.videoElement) {
+                console.warn('Video element not found, retrying...');
+                // Retry after a short delay
+                setTimeout(() => this.setupCompositeCanvas(), 500);
                 return;
             }
 
@@ -393,20 +482,25 @@ class WebARApp {
             
             this.updateCanvasSize();
             
-            // Add resize listener for responsive behavior
-            window.addEventListener('resize', () => {
-                this.updateCanvasSize();
-            });
-            
-            // Add orientation change listener
-            window.addEventListener('orientationchange', () => {
-                setTimeout(() => {
+            // Add resize listener for responsive behavior (only once)
+            if (!this.resizeListenerAdded) {
+                window.addEventListener('resize', () => {
                     this.updateCanvasSize();
-                }, 100);
-            });
+                });
+                
+                // Add orientation change listener
+                window.addEventListener('orientationchange', () => {
+                    setTimeout(() => {
+                        this.updateCanvasSize();
+                    }, 100);
+                });
+                
+                this.resizeListenerAdded = true;
+            }
             
+            console.log('Composite canvas setup complete');
 
-        }, 1000);
+        }, this.isAppActive === false ? 100 : 1000); // Shorter delay when resuming
     }
 
     updateCanvasSize() {
@@ -456,6 +550,11 @@ class WebARApp {
         this.updatePerformanceMonitor(currentTime);
         
         requestAnimationFrame(() => this.render());
+        
+        // Skip rendering if app is not active (paused)
+        if (this.isAppActive === false) {
+            return;
+        }
         
         // Update tracking stabilization first
         this.updateTrackingStabilization();
@@ -518,7 +617,7 @@ class WebARApp {
     }
 
     updateCompositeCanvas() {
-        if (!this.compositeCanvas || !this.videoElement || !this.compositeCtx) {
+        if (!this.compositeCanvas || !this.compositeCtx) {
             return;
         }
 
@@ -526,7 +625,23 @@ class WebARApp {
             // Clear composite canvas
             this.compositeCtx.clearRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
             
-
+            // Check if video element is available and ready
+            if (!this.videoElement) {
+                // Try to find video element again
+                const container = document.querySelector('#ar-container');
+                this.videoElement = container.querySelector('video');
+                
+                if (!this.videoElement) {
+                    // Draw placeholder if no video element
+                    this.compositeCtx.fillStyle = '#333333';
+                    this.compositeCtx.fillRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
+                    this.compositeCtx.fillStyle = '#ffffff';
+                    this.compositeCtx.font = '20px Arial';
+                    this.compositeCtx.textAlign = 'center';
+                    this.compositeCtx.fillText('Camera Initializing...', this.compositeCanvas.width / 2, this.compositeCanvas.height / 2);
+                    return;
+                }
+            }
             
             // Draw video background
             if (this.videoElement.videoWidth > 0 && this.videoElement.videoHeight > 0 && this.videoElement.readyState >= 2) {
