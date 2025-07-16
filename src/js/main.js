@@ -695,25 +695,48 @@ class WebARApp {
                 }
             }
             
-            // Unified video readiness check that works for both platforms
-            const isVideoReady = this.videoElement && 
-                               this.videoElement.videoWidth > 0 && 
-                               this.videoElement.videoHeight > 0 && 
-                               this.videoElement.readyState >= 2;
+            // Enhanced video readiness check with mobile-specific handling
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
             
-            console.log(`Video status: width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
+            let isVideoReady = false;
+            
+            if (isMobile) {
+                // More lenient check for mobile devices
+                isVideoReady = this.videoElement && 
+                              this.videoElement.videoWidth > 0 && 
+                              this.videoElement.videoHeight > 0;
+                
+                // For mobile, also try to draw if we have any video data
+                if (!isVideoReady && this.videoElement && this.videoElement.readyState >= 1) {
+                    isVideoReady = true;
+                }
+            } else {
+                // Standard check for desktop
+                isVideoReady = this.videoElement && 
+                              this.videoElement.videoWidth > 0 && 
+                              this.videoElement.videoHeight > 0 && 
+                              this.videoElement.readyState >= 2;
+            }
+            
+            console.log(`Video status (${isMobile ? 'mobile' : 'desktop'}): width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
             
             // Draw video background
             if (isVideoReady) {
                 this.drawVideoWithAspectRatio();
             } else {
-                // Draw a placeholder if video isn't ready
-                this.compositeCtx.fillStyle = '#333333';
-                this.compositeCtx.fillRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
-                this.compositeCtx.fillStyle = '#ffffff';
-                this.compositeCtx.font = '20px Arial';
-                this.compositeCtx.textAlign = 'center';
-                this.compositeCtx.fillText('Video Loading...', this.compositeCanvas.width / 2, this.compositeCanvas.height / 2);
+                // For mobile, try to draw video even if not fully ready
+                if (isMobile && this.videoElement && this.videoElement.readyState >= 1) {
+                    console.log('Mobile: Attempting to draw video with partial data...');
+                    this.drawVideoWithAspectRatio();
+                } else {
+                    // Draw a placeholder if video isn't ready
+                    this.compositeCtx.fillStyle = '#333333';
+                    this.compositeCtx.fillRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
+                    this.compositeCtx.fillStyle = '#ffffff';
+                    this.compositeCtx.font = '20px Arial';
+                    this.compositeCtx.textAlign = 'center';
+                    this.compositeCtx.fillText('Video Loading...', this.compositeCanvas.width / 2, this.compositeCanvas.height / 2);
+                }
             }
             
             // Draw 3D content on top with proper aspect ratio
@@ -824,7 +847,9 @@ class WebARApp {
             this.renderer.clear();
             this.renderer.render(this.scene, this.camera);
             
-            // Enhanced screenshot logic
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            
+            // Enhanced screenshot logic with mobile-specific handling
             if (this.compositeCanvas) {
                 // Force update composite canvas
                 this.updateCompositeCanvas();
@@ -832,15 +857,24 @@ class WebARApp {
                 // Wait for next frame to ensure render is complete
                 requestAnimationFrame(() => {
                     // Check if composite canvas has video content
-                    const hasVideoContent = this.videoElement && 
-                                          this.videoElement.videoWidth > 0 && 
-                                          this.videoElement.videoHeight > 0;
+                    let hasVideoContent = false;
+                    
+                    if (isMobile) {
+                        // More lenient check for mobile
+                        hasVideoContent = this.videoElement && 
+                                        (this.videoElement.videoWidth > 0 || this.videoElement.readyState >= 1);
+                    } else {
+                        // Standard check for desktop
+                        hasVideoContent = this.videoElement && 
+                                        this.videoElement.videoWidth > 0 && 
+                                        this.videoElement.videoHeight > 0;
+                    }
                     
                     if (hasVideoContent) {
-                        console.log('Taking screenshot from composite canvas with video');
+                        console.log(`Taking screenshot from composite canvas with video (${isMobile ? 'mobile' : 'desktop'})`);
                         this.captureFromCanvas(this.compositeCanvas, 'composite');
                     } else {
-                        console.log('Taking screenshot from renderer canvas (no video)');
+                        console.log(`Taking screenshot from renderer canvas (no video) (${isMobile ? 'mobile' : 'desktop'})`);
                         this.captureFromCanvas(this.renderer.domElement, 'renderer');
                     }
                 });
@@ -994,18 +1028,35 @@ class WebARApp {
             }
             
             // Prioritize MP4 format for better smartphone compatibility
-            const mimeTypes = [
-                'video/mp4;codecs=h264',
-                'video/mp4',
-                'video/webm;codecs=vp9',
-                'video/webm;codecs=vp8',
-                'video/webm'
-            ];
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            
+            let mimeTypes;
+            if (isMobile) {
+                // Mobile-first MIME types with strong MP4 preference
+                mimeTypes = [
+                    'video/mp4;codecs=h264',
+                    'video/mp4',
+                    'video/mp4;codecs=avc1',
+                    'video/webm;codecs=vp9',
+                    'video/webm;codecs=vp8',
+                    'video/webm'
+                ];
+            } else {
+                // Desktop MIME types
+                mimeTypes = [
+                    'video/mp4;codecs=h264',
+                    'video/mp4',
+                    'video/webm;codecs=vp9',
+                    'video/webm;codecs=vp8',
+                    'video/webm'
+                ];
+            }
             
             let selectedMimeType = null;
             for (const mimeType of mimeTypes) {
                 if (MediaRecorder.isTypeSupported(mimeType)) {
                     selectedMimeType = mimeType;
+                    console.log(`Selected MIME type: ${mimeType} (${isMobile ? 'mobile' : 'desktop'})`);
                     break;
                 }
             }
@@ -1169,25 +1220,39 @@ class WebARApp {
                 return;
             }
             
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
             let attempts = 0;
-            const maxAttempts = 30; // 3 seconds max wait
+            const maxAttempts = isMobile ? 50 : 30; // 5 seconds for mobile, 3 seconds for desktop
             
             const checkVideoReady = () => {
                 attempts++;
                 
-                // Unified check that works for both platforms
-                const isReady = this.videoElement.videoWidth > 0 && 
-                               this.videoElement.videoHeight > 0 && 
-                               this.videoElement.readyState >= 2;
+                let isReady = false;
+                
+                if (isMobile) {
+                    // More lenient check for mobile devices
+                    isReady = this.videoElement.videoWidth > 0 && 
+                              this.videoElement.videoHeight > 0;
+                    
+                    // For mobile, also accept partial video data
+                    if (!isReady && this.videoElement.readyState >= 1) {
+                        isReady = true;
+                    }
+                } else {
+                    // Standard check for desktop
+                    isReady = this.videoElement.videoWidth > 0 && 
+                              this.videoElement.videoHeight > 0 && 
+                              this.videoElement.readyState >= 2;
+                }
                 
                 if (isReady) {
-                    console.log(`Video is ready for recording (attempts: ${attempts})`);
+                    console.log(`Video is ready for recording (${isMobile ? 'mobile' : 'desktop'}, attempts: ${attempts})`);
                     resolve();
                 } else if (attempts >= maxAttempts) {
-                    console.log('Video ready timeout, proceeding anyway');
+                    console.log(`Video ready timeout (${isMobile ? 'mobile' : 'desktop'}), proceeding anyway`);
                     resolve();
                 } else {
-                    console.log(`Video not ready yet, retrying... (${attempts}/${maxAttempts})`);
+                    console.log(`Video not ready yet, retrying... (${isMobile ? 'mobile' : 'desktop'}, ${attempts}/${maxAttempts})`);
                     setTimeout(checkVideoReady, 100);
                 }
             };
