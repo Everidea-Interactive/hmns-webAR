@@ -1014,12 +1014,12 @@ class WebARApp {
             
             let canvasToRecord = this.compositeCanvas;
             
-            // Enhanced fallback logic
+            // Enhanced fallback logic with mobile-specific handling
             if (!canvasToRecord) {
-                console.log('Composite canvas not available, using renderer canvas');
+                console.log(`Composite canvas not available, using renderer canvas (${isMobile ? 'mobile' : 'desktop'})`);
                 canvasToRecord = this.renderer.domElement;
             } else if (!this.videoElement || (this.videoElement.videoWidth === 0 && this.videoElement.videoHeight === 0)) {
-                console.log('Video not available, using renderer canvas as fallback');
+                console.log(`Video not available, using renderer canvas as fallback (${isMobile ? 'mobile' : 'desktop'})`);
                 canvasToRecord = this.renderer.domElement;
             }
             
@@ -1035,8 +1035,8 @@ class WebARApp {
                 // Mobile-first MIME types with strong MP4 preference
                 mimeTypes = [
                     'video/mp4;codecs=h264',
-                    'video/mp4',
                     'video/mp4;codecs=avc1',
+                    'video/mp4',
                     'video/webm;codecs=vp9',
                     'video/webm;codecs=vp8',
                     'video/webm'
@@ -1053,13 +1053,16 @@ class WebARApp {
             }
             
             let selectedMimeType = null;
+            console.log(`Available MIME types for ${isMobile ? 'mobile' : 'desktop'}:`);
             for (const mimeType of mimeTypes) {
-                if (MediaRecorder.isTypeSupported(mimeType)) {
+                const isSupported = MediaRecorder.isTypeSupported(mimeType);
+                console.log(`  ${mimeType}: ${isSupported ? 'SUPPORTED' : 'NOT SUPPORTED'}`);
+                if (isSupported && !selectedMimeType) {
                     selectedMimeType = mimeType;
-                    console.log(`Selected MIME type: ${mimeType} (${isMobile ? 'mobile' : 'desktop'})`);
-                    break;
                 }
             }
+            
+            console.log(`Selected MIME type: ${selectedMimeType} (${isMobile ? 'mobile' : 'desktop'})`);
             
             if (!selectedMimeType) {
                 throw new Error('No supported video format found');
@@ -1083,6 +1086,8 @@ class WebARApp {
                 mimeType: selectedMimeType,
                 videoBitsPerSecond: 2000000 // 2 Mbps for better compatibility
             });
+            
+            console.log(`MediaRecorder created with MIME type: ${this.mediaRecorder.mimeType}`);
 
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
@@ -1164,12 +1169,22 @@ class WebARApp {
             
             if (this.mediaRecorder && this.mediaRecorder.mimeType) {
                 const recorderMimeType = this.mediaRecorder.mimeType.toLowerCase();
+                console.log(`MediaRecorder actual MIME type: ${this.mediaRecorder.mimeType}`);
+                
                 if (recorderMimeType.includes('webm')) {
                     fileExtension = 'webm';
                     mimeType = 'video/webm';
                 } else if (recorderMimeType.includes('mp4')) {
                     fileExtension = 'mp4';
                     mimeType = 'video/mp4';
+                } else {
+                    // Fallback: check if we're on mobile and force MP4
+                    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                    if (isMobile) {
+                        console.log('Mobile device detected, forcing MP4 format');
+                        fileExtension = 'mp4';
+                        mimeType = 'video/mp4';
+                    }
                 }
             }
             
