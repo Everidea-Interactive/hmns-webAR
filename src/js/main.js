@@ -271,11 +271,7 @@ class WebARApp {
         document.getElementById('stop-record-btn').addEventListener('click', () => {
             this.stopRecording();
         });
-        
-
     }
-
-
 
     // Stabilization methods
     updateTrackingStabilization() {
@@ -375,9 +371,7 @@ class WebARApp {
         
         // Setup composite canvas for media capture
         this.setupCompositeCanvas();
-        
-
-        
+               
         // Start render loop
         this.render();
     }
@@ -420,35 +414,26 @@ class WebARApp {
         
         const container = document.querySelector('#ar-container');
         const containerRect = container.getBoundingClientRect();
-        const rendererCanvas = this.renderer.domElement;
-        
+                
         // Get device pixel ratio for high-DPI displays
         const pixelRatio = window.devicePixelRatio || 1;
         
-        // Calculate optimal dimensions based on screen size
-        const screenWidth = window.innerWidth;
-        const screenHeight = window.innerHeight;
+        // Use actual container dimensions for responsive behavior
+        const containerWidth = containerRect.width || window.innerWidth;
+        const containerHeight = containerRect.height || window.innerHeight;
         
-        let targetWidth, targetHeight;
+        // Calculate target dimensions based on actual container size
+        let targetWidth = containerWidth * pixelRatio;
+        let targetHeight = containerHeight * pixelRatio;
         
-        if (screenWidth <= 480) {
-            // Small mobile
-            targetWidth = Math.min(screenWidth * pixelRatio, 1280);
-            targetHeight = Math.min(screenHeight * pixelRatio, 720);
-        } else if (screenWidth <= 768) {
-            // Tablet/larger mobile
-            targetWidth = Math.min(screenWidth * pixelRatio, 1920);
-            targetHeight = Math.min(screenHeight * pixelRatio, 1080);
-        } else {
-            // Desktop
-            targetWidth = Math.min(containerRect.width * pixelRatio, 1920);
-            targetHeight = Math.min(containerRect.height * pixelRatio, 1080);
-        }
+        // Ensure minimum quality for small screens
+        const minWidth = 320 * pixelRatio;
+        const minHeight = 240 * pixelRatio;
         
-        // Ensure minimum quality
-        targetWidth = Math.max(targetWidth, 640);
-        targetHeight = Math.max(targetHeight, 480);
+        targetWidth = Math.max(targetWidth, minWidth);
+        targetHeight = Math.max(targetHeight, minHeight);
         
+        // Set canvas dimensions to match container size
         this.compositeCanvas.width = targetWidth;
         this.compositeCanvas.height = targetHeight;
         
@@ -656,8 +641,13 @@ class WebARApp {
             const tempCanvas = document.createElement('canvas');
             const tempCtx = tempCanvas.getContext('2d');
             
-            tempCanvas.width = this.videoElement.videoWidth || 1280;
-            tempCanvas.height = this.videoElement.videoHeight || 720;
+            // Use actual video dimensions or fallback to container size
+            const container = document.querySelector('#ar-container');
+            const containerRect = container.getBoundingClientRect();
+            const pixelRatio = window.devicePixelRatio || 1;
+            
+            tempCanvas.width = this.videoElement.videoWidth || (containerRect.width * pixelRatio);
+            tempCanvas.height = this.videoElement.videoHeight || (containerRect.height * pixelRatio);
             
             tempCtx.drawImage(this.videoElement, 0, 0, tempCanvas.width, tempCanvas.height);
             
