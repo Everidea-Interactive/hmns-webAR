@@ -595,25 +595,26 @@ class WebARApp {
             
             let drawWidth, drawHeight, offsetX, offsetY;
             
+            // Use object-fit: cover behavior (same as CSS)
             if (videoAspect > canvasAspect) {
-                // Video is wider than canvas - fit to width
-                drawWidth = canvas.width;
-                drawHeight = canvas.width / videoAspect;
-                offsetX = 0;
-                offsetY = (canvas.height - drawHeight) / 2;
-            } else {
-                // Video is taller than canvas - fit to height
+                // Video is wider than canvas - fit to height and crop width
                 drawHeight = canvas.height;
                 drawWidth = canvas.height * videoAspect;
                 offsetX = (canvas.width - drawWidth) / 2;
                 offsetY = 0;
+            } else {
+                // Video is taller than canvas - fit to width and crop height
+                drawWidth = canvas.width;
+                drawHeight = canvas.width / videoAspect;
+                offsetX = 0;
+                offsetY = (canvas.height - drawHeight) / 2;
             }
             
             // Fill background with black
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // Draw video with proper aspect ratio
+            // Draw video with cover behavior (cropped to fill)
             ctx.drawImage(
                 video,
                 offsetX, offsetY,
@@ -713,22 +714,24 @@ class WebARApp {
                 tempCtx.fillStyle = '#000000';
                 tempCtx.fillRect(0, 0, containerWidth, containerHeight);
                 
-                // Draw video with aspect ratio preservation
+                // Draw video with cover behavior (same as CSS object-fit: cover)
                 const videoAspect = this.videoElement.videoWidth / this.videoElement.videoHeight;
                 const canvasAspect = containerWidth / containerHeight;
                 
                 let drawWidth, drawHeight, offsetX, offsetY;
                 
                 if (videoAspect > canvasAspect) {
-                    drawWidth = containerWidth;
-                    drawHeight = containerWidth / videoAspect;
-                    offsetX = 0;
-                    offsetY = (containerHeight - drawHeight) / 2;
-                } else {
+                    // Video is wider than canvas - fit to height and crop width
                     drawHeight = containerHeight;
                     drawWidth = containerHeight * videoAspect;
                     offsetX = (containerWidth - drawWidth) / 2;
                     offsetY = 0;
+                } else {
+                    // Video is taller than canvas - fit to width and crop height
+                    drawWidth = containerWidth;
+                    drawHeight = containerWidth / videoAspect;
+                    offsetX = 0;
+                    offsetY = (containerHeight - drawHeight) / 2;
                 }
                 
                 tempCtx.drawImage(this.videoElement, offsetX, offsetY, drawWidth, drawHeight);
