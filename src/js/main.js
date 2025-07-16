@@ -489,6 +489,22 @@ class WebARApp {
             
             this.updateCanvasSize();
             
+            // Add video event listeners for better mobile handling
+            this.videoElement.addEventListener('loadedmetadata', () => {
+                console.log('Video metadata loaded');
+                this.updateCompositeCanvas();
+            });
+            
+            this.videoElement.addEventListener('canplay', () => {
+                console.log('Video can play');
+                this.updateCompositeCanvas();
+            });
+            
+            this.videoElement.addEventListener('playing', () => {
+                console.log('Video is playing');
+                this.updateCompositeCanvas();
+            });
+            
             // Force initial update to ensure canvas has content
             setTimeout(() => {
                 this.updateCompositeCanvas();
@@ -546,6 +562,13 @@ class WebARApp {
         // Set canvas CSS size to match viewport
         this.compositeCanvas.style.width = `${viewportWidth}px`;
         this.compositeCanvas.style.height = `${viewportHeight}px`;
+        
+        // Ensure canvas is properly positioned for mobile
+        this.compositeCanvas.style.position = 'fixed';
+        this.compositeCanvas.style.top = '0';
+        this.compositeCanvas.style.left = '0';
+        this.compositeCanvas.style.zIndex = '1000';
+        this.compositeCanvas.style.pointerEvents = 'none';
         
         console.log(`Canvas size updated: ${targetWidth}x${targetHeight} (CSS: ${viewportWidth}x${viewportHeight})`);
     }
@@ -661,8 +684,18 @@ class WebARApp {
                 }
             }
             
+            // Enhanced video readiness check for mobile devices
+            const isVideoReady = this.videoElement && 
+                               this.videoElement.videoWidth > 0 && 
+                               this.videoElement.videoHeight > 0 && 
+                               this.videoElement.readyState >= 2 &&
+                               !this.videoElement.paused &&
+                               !this.videoElement.ended;
+            
+            console.log(`Video status: width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
+            
             // Draw video background
-            if (this.videoElement.videoWidth > 0 && this.videoElement.videoHeight > 0 && this.videoElement.readyState >= 2) {
+            if (isVideoReady) {
                 this.drawVideoWithAspectRatio();
             } else {
                 // Draw a placeholder if video isn't ready
@@ -917,6 +950,12 @@ class WebARApp {
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
+            // Wait for video to be ready before recording
+            if (this.videoElement) {
+                console.log('Waiting for video to be ready...');
+                await this.waitForVideoReady();
+            }
+            
             // Force update composite canvas before recording
             this.updateCompositeCanvas();
             
@@ -1099,6 +1138,33 @@ class WebARApp {
             // Clear chunks on error to prevent accumulation
             this.recordedChunks = [];
         }
+    }
+
+    async waitForVideoReady() {
+        return new Promise((resolve) => {
+            if (!this.videoElement) {
+                resolve();
+                return;
+            }
+            
+            const checkVideoReady = () => {
+                const isReady = this.videoElement.videoWidth > 0 && 
+                               this.videoElement.videoHeight > 0 && 
+                               this.videoElement.readyState >= 2 &&
+                               !this.videoElement.paused &&
+                               !this.videoElement.ended;
+                
+                if (isReady) {
+                    console.log('Video is ready for recording');
+                    resolve();
+                } else {
+                    console.log('Video not ready yet, retrying...');
+                    setTimeout(checkVideoReady, 100);
+                }
+            };
+            
+            checkVideoReady();
+        });
     }
 
     showStatus(message, isError = false) {
