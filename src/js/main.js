@@ -480,6 +480,13 @@ class WebARApp {
             this.compositeCanvas = document.createElement('canvas');
             this.compositeCtx = this.compositeCanvas.getContext('2d');
             
+            // Set canvas positioning to cover the entire viewport
+            this.compositeCanvas.style.position = 'fixed';
+            this.compositeCanvas.style.top = '0';
+            this.compositeCanvas.style.left = '0';
+            this.compositeCanvas.style.zIndex = '1000';
+            this.compositeCanvas.style.pointerEvents = 'none'; // Allow interaction with elements below
+            
             this.updateCanvasSize();
             
             // Force initial update to ensure canvas has content
@@ -517,13 +524,13 @@ class WebARApp {
         // Get device pixel ratio for high-DPI displays
         const pixelRatio = window.devicePixelRatio || 1;
         
-        // Use actual container dimensions for responsive behavior
-        const containerWidth = containerRect.width || window.innerWidth;
-        const containerHeight = containerRect.height || window.innerHeight;
+        // Use viewport dimensions instead of container for proper mobile sizing
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
         
-        // Calculate target dimensions based on actual container size
-        let targetWidth = containerWidth * pixelRatio;
-        let targetHeight = containerHeight * pixelRatio;
+        // Calculate target dimensions based on viewport size
+        let targetWidth = viewportWidth * pixelRatio;
+        let targetHeight = viewportHeight * pixelRatio;
         
         // Ensure minimum quality for small screens
         const minWidth = 320 * pixelRatio;
@@ -532,11 +539,15 @@ class WebARApp {
         targetWidth = Math.max(targetWidth, minWidth);
         targetHeight = Math.max(targetHeight, minHeight);
         
-        // Set canvas dimensions to match container size
+        // Set canvas dimensions to match viewport size
         this.compositeCanvas.width = targetWidth;
         this.compositeCanvas.height = targetHeight;
         
-
+        // Set canvas CSS size to match viewport
+        this.compositeCanvas.style.width = `${viewportWidth}px`;
+        this.compositeCanvas.style.height = `${viewportHeight}px`;
+        
+        console.log(`Canvas size updated: ${targetWidth}x${targetHeight} (CSS: ${viewportWidth}x${viewportHeight})`);
     }
 
     render() {
@@ -694,6 +705,8 @@ class WebARApp {
                         0, 0, rendererCanvas.width, rendererCanvas.height,
                         offsetX, offsetY, drawWidth, drawHeight
                     );
+                    
+                    console.log(`3D content drawn: ${drawWidth}x${drawHeight} at (${offsetX}, ${offsetY})`);
 
                 } catch (error) {
                     console.error('Error drawing 3D content:', error);
@@ -750,6 +763,7 @@ class WebARApp {
                 drawHeight
             );
             
+            console.log(`Video drawn: ${drawWidth}x${drawHeight} at (${offsetX}, ${offsetY})`);
 
         } catch (error) {
             console.error('Error drawing video:', error);
