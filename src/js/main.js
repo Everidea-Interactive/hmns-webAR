@@ -232,7 +232,7 @@ class WebARApp {
             this.rotationHistory = [];
         }
         
-        // Smooth fade-in effect for the model
+        // Ensure model is fully opaque when target is found
         if (this.model) {
             this.model.traverse((child) => {
                 if (child.isMesh && child.material) {
@@ -240,9 +240,9 @@ class WebARApp {
                     if (!child.material.userData.originalOpacity) {
                         child.material.userData.originalOpacity = child.material.opacity || 1.0;
                     }
-                    // Start from transparent
+                    // Set to fully opaque immediately
                     child.material.transparent = true;
-                    child.material.opacity = 0;
+                    child.material.opacity = child.material.userData.originalOpacity;
                 }
             });
         }
@@ -467,13 +467,12 @@ class WebARApp {
         // Update smooth and stable animations
         if (this.model && this.initialModelY !== undefined) {
             
-            // Handle fade-in/fade-out based on target visibility
+            // Handle visibility based on target detection
             if (this.isTargetVisible) {
-                // Fade in model when target is found
+                // Ensure model is fully opaque when target is visible
                 this.model.traverse((child) => {
                     if (child.isMesh && child.material && child.material.userData.originalOpacity) {
-                        const targetOpacity = child.material.userData.originalOpacity;
-                        child.material.opacity = Math.min(targetOpacity, child.material.opacity + deltaTime * 3); // 3x speed fade in
+                        child.material.opacity = child.material.userData.originalOpacity;
                     }
                 });
                 
