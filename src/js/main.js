@@ -505,6 +505,17 @@ class WebARApp {
                 this.updateCompositeCanvas();
             });
             
+            // Add additional mobile-specific event listeners
+            this.videoElement.addEventListener('loadeddata', () => {
+                console.log('Video data loaded');
+                this.updateCompositeCanvas();
+            });
+            
+            this.videoElement.addEventListener('canplaythrough', () => {
+                console.log('Video can play through');
+                this.updateCompositeCanvas();
+            });
+            
             // Force initial update to ensure canvas has content
             setTimeout(() => {
                 this.updateCompositeCanvas();
@@ -684,13 +695,11 @@ class WebARApp {
                 }
             }
             
-            // Enhanced video readiness check for mobile devices
+            // Unified video readiness check that works for both platforms
             const isVideoReady = this.videoElement && 
                                this.videoElement.videoWidth > 0 && 
                                this.videoElement.videoHeight > 0 && 
-                               this.videoElement.readyState >= 2 &&
-                               !this.videoElement.paused &&
-                               !this.videoElement.ended;
+                               this.videoElement.readyState >= 2;
             
             console.log(`Video status: width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
             
@@ -815,17 +824,27 @@ class WebARApp {
             this.renderer.clear();
             this.renderer.render(this.scene, this.camera);
             
-            // Try multiple methods in order of preference
-            if (this.videoElement && this.compositeCanvas) {
+            // Enhanced screenshot logic
+            if (this.compositeCanvas) {
+                // Force update composite canvas
+                this.updateCompositeCanvas();
+                
                 // Wait for next frame to ensure render is complete
                 requestAnimationFrame(() => {
-                    this.updateCompositeCanvas();
-                    // Wait one more frame to ensure composite is ready
-                    requestAnimationFrame(() => {
+                    // Check if composite canvas has video content
+                    const hasVideoContent = this.videoElement && 
+                                          this.videoElement.videoWidth > 0 && 
+                                          this.videoElement.videoHeight > 0;
+                    
+                    if (hasVideoContent) {
+                        console.log('Taking screenshot from composite canvas with video');
                         this.captureFromCanvas(this.compositeCanvas, 'composite');
-                    });
+                    } else {
+                        console.log('Taking screenshot from renderer canvas (no video)');
+                        this.captureFromCanvas(this.renderer.domElement, 'renderer');
+                    }
                 });
-            } else if (this.videoElement) {
+            } else if (this.videoElement && this.videoElement.videoWidth > 0) {
                 this.captureFromVideo();
             } else {
                 this.captureFromCanvas(this.renderer.domElement, 'renderer');
@@ -950,7 +969,7 @@ class WebARApp {
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
-            // Wait for video to be ready before recording
+            // Wait for video to be ready before recording (with mobile fallback)
             if (this.videoElement) {
                 console.log('Waiting for video to be ready...');
                 await this.waitForVideoReady();
@@ -961,9 +980,12 @@ class WebARApp {
             
             let canvasToRecord = this.compositeCanvas;
             
-            // Fallback to renderer canvas if composite is not available
-            if (!canvasToRecord || !this.videoElement) {
-                console.log('Using renderer canvas as fallback');
+            // Enhanced fallback logic
+            if (!canvasToRecord) {
+                console.log('Composite canvas not available, using renderer canvas');
+                canvasToRecord = this.renderer.domElement;
+            } else if (!this.videoElement || (this.videoElement.videoWidth === 0 && this.videoElement.videoHeight === 0)) {
+                console.log('Video not available, using renderer canvas as fallback');
                 canvasToRecord = this.renderer.domElement;
             }
             
@@ -1147,18 +1169,25 @@ class WebARApp {
                 return;
             }
             
+            let attempts = 0;
+            const maxAttempts = 30; // 3 seconds max wait
+            
             const checkVideoReady = () => {
+                attempts++;
+                
+                // Unified check that works for both platforms
                 const isReady = this.videoElement.videoWidth > 0 && 
                                this.videoElement.videoHeight > 0 && 
-                               this.videoElement.readyState >= 2 &&
-                               !this.videoElement.paused &&
-                               !this.videoElement.ended;
+                               this.videoElement.readyState >= 2;
                 
                 if (isReady) {
-                    console.log('Video is ready for recording');
+                    console.log(`Video is ready for recording (attempts: ${attempts})`);
+                    resolve();
+                } else if (attempts >= maxAttempts) {
+                    console.log('Video ready timeout, proceeding anyway');
                     resolve();
                 } else {
-                    console.log('Video not ready yet, retrying...');
+                    console.log(`Video not ready yet, retrying... (${attempts}/${maxAttempts})`);
                     setTimeout(checkVideoReady, 100);
                 }
             };
