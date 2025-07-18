@@ -666,6 +666,16 @@ class WebARApp {
         if (this.compositeCanvas) {
             this.updateCompositeCanvas();
         }
+        
+        // Force additional canvas updates during recording for better frame capture
+        if (this.isRecording && this.compositeCanvas) {
+            // Schedule an additional update to ensure MediaRecorder gets fresh frames
+            setTimeout(() => {
+                if (this.isRecording && this.compositeCanvas) {
+                    this.updateCompositeCanvas();
+                }
+            }, 16); // ~60fps update during recording
+        }
     }
 
     updateCompositeCanvas() {
@@ -700,7 +710,10 @@ class WebARApp {
                                this.videoElement.videoWidth > 0 && 
                                this.videoElement.videoHeight > 0;
             
-            console.log(`Video status: width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
+            // Only log video status during recording to reduce console spam
+            if (this.isRecording) {
+                console.log(`Video status: width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
+            }
             
             // Draw video background
             if (isVideoReady) {
@@ -757,11 +770,13 @@ class WebARApp {
                 }
             }
             
-            // Debug: Check if canvas has content
-            const imageData = this.compositeCtx.getImageData(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
-            const hasContent = imageData.data.some(pixel => pixel !== 0);
-            if (!hasContent) {
-                console.warn('Composite canvas appears to be empty');
+            // Debug: Check if canvas has content (only during recording)
+            if (this.isRecording) {
+                const imageData = this.compositeCtx.getImageData(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
+                const hasContent = imageData.data.some(pixel => pixel !== 0);
+                if (!hasContent) {
+                    console.warn('Composite canvas appears to be empty during recording');
+                }
             }
         } catch (error) {
             console.error('Error in updateCompositeCanvas:', error);
@@ -875,14 +890,44 @@ class WebARApp {
     captureFromCanvas(canvas, method) {
         requestAnimationFrame(() => {
             try {
-                const dataURL = canvas.toDataURL('image/png', 1.0);
+                // For mobile devices, ensure we're using the correct canvas dimensions
+                const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
                 
-                if (dataURL.length < 1000) {
-                    throw new Error(`${method} canvas appears to be empty`);
+                // Create a temporary canvas for mobile to ensure proper dimensions
+                if (isMobile && canvas === this.compositeCanvas) {
+                    const tempCanvas = document.createElement('canvas');
+                    const tempCtx = tempCanvas.getContext('2d');
+                    
+                    // Use device pixel ratio for high-DPI displays
+                    const pixelRatio = window.devicePixelRatio || 1;
+                    const viewportWidth = window.innerWidth * pixelRatio;
+                    const viewportHeight = window.innerHeight * pixelRatio;
+                    
+                    tempCanvas.width = viewportWidth;
+                    tempCanvas.height = viewportHeight;
+                    
+                    // Draw the composite canvas to the temp canvas
+                    tempCtx.drawImage(canvas, 0, 0, viewportWidth, viewportHeight);
+                    
+                    const dataURL = tempCanvas.toDataURL('image/png', 1.0);
+                    
+                    if (dataURL.length < 1000) {
+                        throw new Error(`${method} canvas appears to be empty`);
+                    }
+                    
+                    this.downloadImage(dataURL);
+                    this.showStatus('Screenshot saved!');
+                } else {
+                    // Standard desktop capture
+                    const dataURL = canvas.toDataURL('image/png', 1.0);
+                    
+                    if (dataURL.length < 1000) {
+                        throw new Error(`${method} canvas appears to be empty`);
+                    }
+                    
+                    this.downloadImage(dataURL);
+                    this.showStatus('Screenshot saved!');
                 }
-                
-                this.downloadImage(dataURL);
-                this.showStatus('Screenshot saved!');
             } catch (error) {
                 console.error(`${method} canvas capture failed:`, error);
                 this.showStatus(`Screenshot failed (${method})`, true);
@@ -962,6 +1007,55 @@ class WebARApp {
     }
 
     downloadImage(dataURL) {
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        
+        if (isIOS) {
+            // iOS Safari has limitations with download links, use alternative approach
+            try {
+                // Create a new window/tab to display the image
+                const newWindow = window.open();
+                newWindow.document.write(`
+                    <html>
+                        <head>
+                            <title>Screenshot</title>
+                            <style>
+                                body { margin: 0; padding: 20px; background: #f0f0f0; }
+                                img { max-width: 100%; height: auto; border: 1px solid #ccc; }
+                                .download-btn { 
+                                    display: block; 
+                                    margin: 20px 0; 
+                                    padding: 10px 20px; 
+                                    background: #007AFF; 
+                                    color: white; 
+                                    text-decoration: none; 
+                                    border-radius: 5px; 
+                                    text-align: center; 
+                                }
+                            </style>
+                        </head>
+                        <body>
+                            <img src="${dataURL}" alt="Screenshot" />
+                            <a href="${dataURL}" download="webAR-screenshot-${Date.now()}.png" class="download-btn">
+                                Download Screenshot
+                            </a>
+                            <p>Tap and hold the image above to save it to your device.</p>
+                        </body>
+                    </html>
+                `);
+                newWindow.document.close();
+            } catch (error) {
+                console.error('Failed to open image in new window:', error);
+                // Fallback to standard download
+                this.standardDownload(dataURL);
+            }
+        } else {
+            // Standard download for other devices
+            this.standardDownload(dataURL);
+        }
+    }
+
+    standardDownload(dataURL) {
         const link = document.createElement('a');
         link.download = `webAR-screenshot-${Date.now()}.png`;
         link.href = dataURL;
@@ -1053,8 +1147,8 @@ class WebARApp {
                 throw new Error('No supported video format found');
             }
             
-            // Create stream with appropriate frame rate
-            const stream = canvasToRecord.captureStream(30);
+            // Create stream with appropriate frame rate - use higher frame rate for smoother recording
+            const stream = canvasToRecord.captureStream(60); // Increased to 60fps for smoother recording
             
             // Verify stream has video tracks
             if (!stream.getVideoTracks().length) {
@@ -1069,7 +1163,7 @@ class WebARApp {
             
             this.mediaRecorder = new MediaRecorder(stream, {
                 mimeType: selectedMimeType,
-                videoBitsPerSecond: 2000000 // 2 Mbps for better compatibility
+                videoBitsPerSecond: 4000000 // Increased to 4 Mbps for better quality
             });
             
             console.log(`MediaRecorder created with MIME type: ${this.mediaRecorder.mimeType}`);
@@ -1093,8 +1187,11 @@ class WebARApp {
             };
 
             // Start recording with smaller timeslice for better frame capture
-            this.mediaRecorder.start(100); // 100ms chunks for better continuous recording
+            this.mediaRecorder.start(50); // Reduced to 50ms chunks for more frequent frame capture
             this.isRecording = true;
+            
+            // Start recording-specific update loop for better frame capture
+            this.startRecordingUpdateLoop();
             
             // Update UI
             document.getElementById('record-btn').classList.add('hidden');
@@ -1108,6 +1205,24 @@ class WebARApp {
             this.showStatus(`Recording failed: ${error.message}`, true);
             this.resetRecordingUI();
         }
+    }
+
+    startRecordingUpdateLoop() {
+        // Create a dedicated update loop for recording to ensure smooth frame capture
+        const recordingUpdateLoop = () => {
+            if (this.isRecording && this.compositeCanvas) {
+                // Force render and update
+                this.renderer.clear();
+                this.renderer.render(this.scene, this.camera);
+                this.updateCompositeCanvas();
+                
+                // Schedule next update
+                setTimeout(recordingUpdateLoop, 16); // ~60fps during recording
+            }
+        };
+        
+        // Start the recording update loop
+        recordingUpdateLoop();
     }
 
     stopRecording() {
@@ -1150,6 +1265,7 @@ class WebARApp {
             
             // Determine file extension and MIME type based on the MediaRecorder's MIME type
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
             let fileExtension = 'mp4';
             let mimeType = 'video/mp4';
             
@@ -1197,21 +1313,52 @@ class WebARApp {
             
             const url = URL.createObjectURL(blob);
             
-            // Create download link
-            const link = document.createElement('a');
-            link.download = `webAR-recording-${Date.now()}.${fileExtension}`;
-            link.href = url;
-            link.style.display = 'none';
-            document.body.appendChild(link);
-            
-            // Trigger download
-            link.click();
-            
-            // Clean up
-            setTimeout(() => {
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
-            }, 1000);
+            if (isIOS) {
+                // iOS Safari has limitations with download links, use alternative approach
+                try {
+                    // Create a new window/tab to display the video
+                    const newWindow = window.open();
+                    newWindow.document.write(`
+                        <html>
+                            <head>
+                                <title>Recording</title>
+                                <style>
+                                    body { margin: 0; padding: 20px; background: #f0f0f0; }
+                                    video { max-width: 100%; height: auto; border: 1px solid #ccc; }
+                                    .download-btn { 
+                                        display: block; 
+                                        margin: 20px 0; 
+                                        padding: 10px 20px; 
+                                        background: #007AFF; 
+                                        color: white; 
+                                        text-decoration: none; 
+                                        border-radius: 5px; 
+                                        text-align: center; 
+                                    }
+                                </style>
+                            </head>
+                            <body>
+                                <video controls autoplay>
+                                    <source src="${url}" type="${mimeType}">
+                                    Your browser does not support the video tag.
+                                </video>
+                                <a href="${url}" download="webAR-recording-${Date.now()}.${fileExtension}" class="download-btn">
+                                    Download Recording
+                                </a>
+                                <p>Tap and hold the video above to save it to your device.</p>
+                            </body>
+                        </html>
+                    `);
+                    newWindow.document.close();
+                } catch (error) {
+                    console.error('Failed to open video in new window:', error);
+                    // Fallback to standard download
+                    this.standardDownloadRecording(url, fileExtension);
+                }
+            } else {
+                // Standard download for other devices
+                this.standardDownloadRecording(url, fileExtension);
+            }
             
             this.recordedChunks = [];
             
@@ -1223,6 +1370,24 @@ class WebARApp {
             // Clear chunks on error to prevent accumulation
             this.recordedChunks = [];
         }
+    }
+
+    standardDownloadRecording(url, fileExtension) {
+        // Create download link
+        const link = document.createElement('a');
+        link.download = `webAR-recording-${Date.now()}.${fileExtension}`;
+        link.href = url;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        
+        // Trigger download
+        link.click();
+        
+        // Clean up
+        setTimeout(() => {
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }, 1000);
     }
 
     async waitForVideoReady() {
