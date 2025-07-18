@@ -67,9 +67,22 @@ class WebARApp {
 
     async init() {
         try {
+            // Show loading progress
+            this.updateLoadingProgress('Setting up AR...', 20);
+            
             await this.setupAR();
+            
+            this.updateLoadingProgress('Loading 3D model...', 50);
+            
+            // Preload the 3D model before starting AR
+            await this.preloadModel();
+            
+            this.updateLoadingProgress('Preparing interface...', 80);
+            
             this.setupUI();
-            this.loadModel();
+            
+            this.updateLoadingProgress('Starting AR experience...', 100);
+            
             this.startAR();
         } catch (error) {
             console.error('Failed to initialize WebAR:', error);
@@ -77,60 +90,31 @@ class WebARApp {
         }
     }
 
-    async setupAR() {
-        // Initialize MindAR
-        this.mindarThree = new MindARThree({
-            container: document.querySelector('#ar-container'),
-            imageTargetSrc: './src/assets/image_targets/targets.mind'
-        });
-
-        const { renderer, scene, camera } = this.mindarThree;
-        this.renderer = renderer;
-        this.scene = scene;
-        this.camera = camera;
-
-        // Configure renderer for media capture and performance
-        this.renderer.preserveDrawingBuffer = true;
-        this.renderer.autoClear = false;
-        this.renderer.setClearColor(0x000000, 0); // Transparent background
+    updateLoadingProgress(message, percentage) {
+        const loadingScreen = document.getElementById('loading-screen');
+        const loadingContent = loadingScreen.querySelector('.loading-content');
+        const progressText = loadingContent.querySelector('p');
         
-        // Mobile-specific renderer optimizations
-        if (this.isMobile) {
-            // Reduce shadow map size for better performance
-            this.renderer.shadowMap.enabled = false; // Disable shadows on mobile
-            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio
-        } else {
-            this.renderer.shadowMap.enabled = true;
-            this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        if (progressText) {
+            progressText.textContent = message;
         }
-
-        // Add optimized lighting for better 3D model appearance
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // Increased ambient light
-        this.scene.add(ambientLight);
-
-        // Main directional light - simplified for mobile
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(2, 2, 1);
-        if (!this.isMobile) {
-            directionalLight.castShadow = true;
-        }
-        this.scene.add(directionalLight);
         
-        // Only add additional lights on desktop for better performance
-        if (!this.isMobile) {
-            // Fill light from the opposite side
-            const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
-            fillLight.position.set(-1, 1, 1);
-            this.scene.add(fillLight);
-            
-            // Rim light from behind
-            const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
-            rimLight.position.set(0, 1, -1);
-            this.scene.add(rimLight);
+        // Update progress bar if it exists, or create one
+        let progressBar = loadingContent.querySelector('.progress-bar');
+        if (!progressBar) {
+            progressBar = document.createElement('div');
+            progressBar.className = 'progress-bar';
+            progressBar.innerHTML = `
+                <div class="progress-fill"></div>
+            `;
+            loadingContent.appendChild(progressBar);
         }
+        
+        const progressFill = progressBar.querySelector('.progress-fill');
+        progressFill.style.width = `${percentage}%`;
     }
 
-    async loadModel() {
+    async preloadModel() {
         const loader = new GLTFLoader();
         
         try {
@@ -214,6 +198,61 @@ class WebARApp {
             this.showStatus('Failed to load 3D model', true);
         }
     }
+
+    async setupAR() {
+        // Initialize MindAR
+        this.mindarThree = new MindARThree({
+            container: document.querySelector('#ar-container'),
+            imageTargetSrc: './src/assets/image_targets/targets.mind'
+        });
+
+        const { renderer, scene, camera } = this.mindarThree;
+        this.renderer = renderer;
+        this.scene = scene;
+        this.camera = camera;
+
+        // Configure renderer for media capture and performance
+        this.renderer.preserveDrawingBuffer = true;
+        this.renderer.autoClear = false;
+        this.renderer.setClearColor(0x000000, 0); // Transparent background
+        
+        // Mobile-specific renderer optimizations
+        if (this.isMobile) {
+            // Reduce shadow map size for better performance
+            this.renderer.shadowMap.enabled = false; // Disable shadows on mobile
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio
+        } else {
+            this.renderer.shadowMap.enabled = true;
+            this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        }
+
+        // Add optimized lighting for better 3D model appearance
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // Increased ambient light
+        this.scene.add(ambientLight);
+
+        // Main directional light - simplified for mobile
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(2, 2, 1);
+        if (!this.isMobile) {
+            directionalLight.castShadow = true;
+        }
+        this.scene.add(directionalLight);
+        
+        // Only add additional lights on desktop for better performance
+        if (!this.isMobile) {
+            // Fill light from the opposite side
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+            fillLight.position.set(-1, 1, 1);
+            this.scene.add(fillLight);
+            
+            // Rim light from behind
+            const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
+            rimLight.position.set(0, 1, -1);
+            this.scene.add(rimLight);
+        }
+    }
+
+
 
     optimizeModelForMobile(model) {
         model.traverse((child) => {
@@ -738,24 +777,15 @@ class WebARApp {
         this.renderer.clear();
         this.renderer.render(this.scene, this.camera);
         
-        // Optimize canvas updates - only update when necessary
-        const shouldUpdateCanvas = this.isRecording || 
-                                 (currentTime - this.lastCanvasUpdate > this.canvasUpdateInterval);
-        
-        if (shouldUpdateCanvas && this.compositeCanvas) {
+        // Always update canvas during recording for consistent frame capture
+        if (this.isRecording && this.compositeCanvas) {
+            this.updateCompositeCanvas();
+        } else if (this.compositeCanvas && currentTime - this.lastCanvasUpdate > this.canvasUpdateInterval) {
             this.updateCompositeCanvas();
             this.lastCanvasUpdate = currentTime;
         }
         
-        // Force additional canvas updates during recording for better frame capture
-        if (this.isRecording && this.compositeCanvas) {
-            // Schedule an additional update to ensure MediaRecorder gets fresh frames
-            setTimeout(() => {
-                if (this.isRecording && this.compositeCanvas) {
-                    this.updateCompositeCanvas();
-                }
-            }, 16); // ~60fps update during recording
-        }
+        // Remove the additional canvas update during recording since we have a dedicated recording loop
     }
 
     updateCompositeCanvas() {
@@ -764,8 +794,13 @@ class WebARApp {
         }
 
         try {
-            // Clear composite canvas
+            // Clear composite canvas with proper dimensions
             this.compositeCtx.clearRect(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
+            
+            // Ensure canvas is properly sized for recording
+            if (this.isRecording && this.compositeCanvas.width === 0) {
+                this.updateCanvasSize();
+            }
             
             // Check if video element is available and ready
             if (!this.videoElement) {
@@ -790,8 +825,6 @@ class WebARApp {
                                this.videoElement.videoWidth > 0 && 
                                this.videoElement.videoHeight > 0;
             
-
-            
             // Draw video background
             if (isVideoReady) {
                 this.drawVideoWithAspectRatio();
@@ -807,7 +840,7 @@ class WebARApp {
             
             // Draw 3D content on top with proper aspect ratio
             const rendererCanvas = this.renderer.domElement;
-            if (rendererCanvas.width > 0 && rendererCanvas.height > 0) {
+            if (rendererCanvas && rendererCanvas.width > 0 && rendererCanvas.height > 0) {
                 this.compositeCtx.globalCompositeOperation = 'source-over';
                 this.compositeCtx.globalAlpha = 1.0;
                 try {
@@ -831,20 +864,20 @@ class WebARApp {
                         offsetY = 0;
                     }
                     
-                    this.compositeCtx.drawImage(
-                        rendererCanvas,
-                        0, 0, rendererCanvas.width, rendererCanvas.height,
-                        offsetX, offsetY, drawWidth, drawHeight
-                    );
-                    
-
+                    // Ensure we're drawing to a valid canvas area
+                    if (drawWidth > 0 && drawHeight > 0) {
+                        this.compositeCtx.drawImage(
+                            rendererCanvas,
+                            0, 0, rendererCanvas.width, rendererCanvas.height,
+                            offsetX, offsetY, drawWidth, drawHeight
+                        );
+                    }
 
                 } catch (error) {
                     console.error('Error drawing 3D content:', error);
                 }
             }
             
-
         } catch (error) {
             console.error('Error in updateCompositeCanvas:', error);
         }
@@ -888,8 +921,6 @@ class WebARApp {
                 drawWidth,
                 drawHeight
             );
-            
-
 
         } catch (error) {
             console.error('Error drawing video:', error);
@@ -1140,6 +1171,11 @@ class WebARApp {
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
+            // Optimize canvas for recording on mobile
+            if (this.isMobile) {
+                this.optimizeCanvasForRecording();
+            }
+            
             // Wait for video to be ready before recording (with mobile fallback)
             if (this.videoElement) {
                 await this.waitForVideoReady();
@@ -1148,11 +1184,14 @@ class WebARApp {
             // Force update composite canvas before recording
             this.updateCompositeCanvas();
             
+            // Wait a frame to ensure canvas is properly updated
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            
             let canvasToRecord = this.compositeCanvas;
             
-            // Simplified canvas selection - always use composite canvas if available
-            if (!canvasToRecord) {
-                canvasToRecord = this.renderer.domElement;
+            // Always use composite canvas for recording
+            if (!canvasToRecord || canvasToRecord.width === 0) {
+                throw new Error('Composite canvas not ready for recording');
             }
             
             if (!canvasToRecord.captureStream) {
@@ -1201,25 +1240,32 @@ class WebARApp {
                 throw new Error('No supported video format found');
             }
             
-            // Create stream with appropriate frame rate - use higher frame rate for smoother recording
-            const stream = canvasToRecord.captureStream(60); // Increased to 60fps for smoother recording
+            // Optimized stream settings with higher frame rate for better capture
+            const frameRate = this.isMobile ? 30 : 60; // Increased mobile frame rate
+            const stream = canvasToRecord.captureStream(frameRate);
             
             // Verify stream has video tracks
             if (!stream.getVideoTracks().length) {
                 throw new Error('No video tracks available');
             }
             
-
-            
             // Clear any previous recording data
             this.recordedChunks = [];
             
-            this.mediaRecorder = new MediaRecorder(stream, {
-                mimeType: selectedMimeType,
-                videoBitsPerSecond: 4000000 // Increased to 4 Mbps for better quality
-            });
+            // Mobile-optimized MediaRecorder settings
+            const recorderOptions = {
+                mimeType: selectedMimeType
+            };
             
-
+            if (this.isMobile) {
+                // Lower bitrate for mobile to reduce lag
+                recorderOptions.videoBitsPerSecond = 1500000; // 1.5 Mbps for mobile
+            } else {
+                // Higher bitrate for desktop
+                recorderOptions.videoBitsPerSecond = 4000000; // 4 Mbps for desktop
+            }
+            
+            this.mediaRecorder = new MediaRecorder(stream, recorderOptions);
 
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
@@ -1237,8 +1283,9 @@ class WebARApp {
                 this.resetRecordingUI();
             };
 
-            // Start recording with smaller timeslice for better frame capture
-            this.mediaRecorder.start(50); // Reduced to 50ms chunks for more frequent frame capture
+            // Optimized timeslice settings for better frame capture
+            const timeslice = this.isMobile ? 100 : 50; // Reduced chunk size for more frequent updates
+            this.mediaRecorder.start(timeslice);
             this.isRecording = true;
             
             // Start recording-specific update loop for better frame capture
@@ -1258,6 +1305,46 @@ class WebARApp {
         }
     }
 
+    optimizeCanvasForRecording() {
+        if (!this.compositeCanvas) return;
+        
+        // Store original canvas size for restoration
+        if (!this.originalCanvasSize) {
+            this.originalCanvasSize = {
+                width: this.compositeCanvas.width,
+                height: this.compositeCanvas.height
+            };
+        }
+        
+        // Reduce canvas size for mobile recording to improve performance
+        const pixelRatio = window.devicePixelRatio || 1;
+        const maxRecordingWidth = 720; // Reduced from 1280
+        const maxRecordingHeight = 480; // Reduced from 720
+        
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        
+        // Calculate optimal recording size
+        let targetWidth = Math.min(viewportWidth * pixelRatio, maxRecordingWidth * pixelRatio);
+        let targetHeight = Math.min(viewportHeight * pixelRatio, maxRecordingHeight * pixelRatio);
+        
+        // Maintain aspect ratio
+        const aspectRatio = viewportWidth / viewportHeight;
+        if (targetWidth / targetHeight > aspectRatio) {
+            targetWidth = targetHeight * aspectRatio;
+        } else {
+            targetHeight = targetWidth / aspectRatio;
+        }
+        
+        // Set optimized canvas size for recording
+        this.compositeCanvas.width = targetWidth;
+        this.compositeCanvas.height = targetHeight;
+        
+        // Update CSS size to maintain visual appearance
+        this.compositeCanvas.style.width = `${viewportWidth}px`;
+        this.compositeCanvas.style.height = `${viewportHeight}px`;
+    }
+
     startRecordingUpdateLoop() {
         // Create a dedicated update loop for recording to ensure smooth frame capture
         const recordingUpdateLoop = () => {
@@ -1267,9 +1354,8 @@ class WebARApp {
                 this.renderer.render(this.scene, this.camera);
                 this.updateCompositeCanvas();
                 
-                // Schedule next update - use different intervals for mobile vs desktop
-                const updateInterval = this.isMobile ? 33 : 16; // ~30fps for mobile, ~60fps for desktop
-                setTimeout(recordingUpdateLoop, updateInterval);
+                // Use requestAnimationFrame for better timing and performance
+                requestAnimationFrame(recordingUpdateLoop);
             }
         };
         
@@ -1282,6 +1368,12 @@ class WebARApp {
             try {
                 this.mediaRecorder.stop();
                 this.isRecording = false;
+                
+                // Restore original canvas size on mobile
+                if (this.isMobile && this.originalCanvasSize) {
+                    this.restoreCanvasSize();
+                }
+                
                 this.resetRecordingUI();
                 this.showStatus('Recording stopped');
             } catch (error) {
@@ -1290,6 +1382,23 @@ class WebARApp {
                 this.resetRecordingUI();
             }
         }
+    }
+
+    restoreCanvasSize() {
+        if (!this.compositeCanvas || !this.originalCanvasSize) return;
+        
+        // Restore original canvas size
+        this.compositeCanvas.width = this.originalCanvasSize.width;
+        this.compositeCanvas.height = this.originalCanvasSize.height;
+        
+        // Update CSS size to match viewport
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        this.compositeCanvas.style.width = `${viewportWidth}px`;
+        this.compositeCanvas.style.height = `${viewportHeight}px`;
+        
+        // Clear the stored original size
+        this.originalCanvasSize = null;
     }
 
     resetRecordingUI() {

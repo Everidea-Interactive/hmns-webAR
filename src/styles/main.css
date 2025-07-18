@@ -62,6 +62,23 @@ body {
     color: white;
 }
 
+.progress-bar {
+    width: 200px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+    margin: 20px auto 0;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4ade80, #22c55e);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
 .spinner {
     width: 50px;
     height: 50px;
@@ -263,6 +280,11 @@ body {
         height: 40px;
         margin: 0 auto 15px;
     }
+    
+    .progress-bar {
+        width: 140px;
+        height: 4px;
+    }
 }
 
 /* Landscape Mobile */
@@ -281,6 +303,11 @@ body {
     .control-btn {
         width: 44px;
         height: 44px;
+    }
+    
+    .progress-bar {
+        width: 120px;
+        height: 3px;
     }
 }
 
