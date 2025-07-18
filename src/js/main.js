@@ -38,10 +38,16 @@ class WebARApp {
         this.rotationHistory = [];
         this.historySize = 5;
         
-        // Performance optimization
-        this.lastFrameTime = 0;
-        this.targetFPS = 60;
+        // Performance optimization - mobile-specific settings
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        this.isMobile = isMobile;
+        
+        // Reduce frame rate for mobile devices
+        this.targetFPS = isMobile ? 30 : 60; // 30fps for mobile, 60fps for desktop
         this.frameInterval = 1000 / this.targetFPS;
+        this.lastFrameTime = 0;
+        
+        // Performance monitoring
         this.performanceMonitor = {
             frameCount: 0,
             lastFPSUpdate: 0,
@@ -51,6 +57,10 @@ class WebARApp {
         // App state tracking
         this.isAppActive = true;
         this.resizeListenerAdded = false;
+        
+        // Canvas update optimization
+        this.lastCanvasUpdate = 0;
+        this.canvasUpdateInterval = isMobile ? 100 : 50; // Update canvas less frequently on mobile
         
         this.init();
     }
@@ -79,30 +89,45 @@ class WebARApp {
         this.scene = scene;
         this.camera = camera;
 
-        // Configure renderer for media capture
+        // Configure renderer for media capture and performance
         this.renderer.preserveDrawingBuffer = true;
         this.renderer.autoClear = false;
         this.renderer.setClearColor(0x000000, 0); // Transparent background
+        
+        // Mobile-specific renderer optimizations
+        if (this.isMobile) {
+            // Reduce shadow map size for better performance
+            this.renderer.shadowMap.enabled = false; // Disable shadows on mobile
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio
+        } else {
+            this.renderer.shadowMap.enabled = true;
+            this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        }
 
-        // Add enhanced lighting for better 3D model appearance
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        // Add optimized lighting for better 3D model appearance
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // Increased ambient light
         this.scene.add(ambientLight);
 
-        // Main directional light
+        // Main directional light - simplified for mobile
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
         directionalLight.position.set(2, 2, 1);
-        directionalLight.castShadow = true;
+        if (!this.isMobile) {
+            directionalLight.castShadow = true;
+        }
         this.scene.add(directionalLight);
         
-        // Fill light from the opposite side
-        const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
-        fillLight.position.set(-1, 1, 1);
-        this.scene.add(fillLight);
-        
-        // Rim light from behind
-        const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
-        rimLight.position.set(0, 1, -1);
-        this.scene.add(rimLight);
+        // Only add additional lights on desktop for better performance
+        if (!this.isMobile) {
+            // Fill light from the opposite side
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+            fillLight.position.set(-1, 1, 1);
+            this.scene.add(fillLight);
+            
+            // Rim light from behind
+            const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
+            rimLight.position.set(0, 1, -1);
+            this.scene.add(rimLight);
+        }
     }
 
     async loadModel() {
@@ -120,12 +145,15 @@ class WebARApp {
 
             this.model = gltf.scene;
             
+            // Optimize model for mobile performance
+            if (this.isMobile) {
+                this.optimizeModelForMobile(this.model);
+            }
+            
             // Get model bounding box to calculate proper scaling
             const box = new THREE.Box3().setFromObject(this.model);
             const size = box.getSize(new THREE.Vector3());
             const center = box.getCenter(new THREE.Vector3());
-            
-
             
             // Calculate scale to fit the model within the target bounds
             // Assuming target is roughly 1 unit wide
@@ -158,30 +186,64 @@ class WebARApp {
                 this.onTargetLost();
             };
             
-            // Create a subtle shadow plane
-            this.createShadowPlane(anchor.group, scale);
+            // Create a subtle shadow plane (only on desktop)
+            if (!this.isMobile) {
+                this.createShadowPlane(anchor.group, scale);
+            }
             
             anchor.group.add(this.model);
             
             // Store anchor reference
             this.anchor = anchor;
 
-            // Add animations if available
+            // Add animations if available (limit on mobile)
             if (gltf.animations && gltf.animations.length > 0) {
                 this.mixer = new THREE.AnimationMixer(this.model);
-                gltf.animations.forEach((clip) => {
-                    this.mixer.clipAction(clip).play();
-                });
+                // Limit animations on mobile for better performance
+                const maxAnimations = this.isMobile ? 1 : gltf.animations.length;
+                for (let i = 0; i < maxAnimations; i++) {
+                    this.mixer.clipAction(gltf.animations[i]).play();
+                }
             }
             
-            // Add floating animation
+            // Add floating animation (simplified for mobile)
             this.addFloatingAnimation();
-
 
         } catch (error) {
             console.error('Failed to load 3D model:', error);
             this.showStatus('Failed to load 3D model', true);
         }
+    }
+
+    optimizeModelForMobile(model) {
+        model.traverse((child) => {
+            if (child.isMesh) {
+                // Simplify materials for mobile
+                if (child.material) {
+                    // Reduce texture quality for mobile
+                    if (child.material.map) {
+                        child.material.map.generateMipmaps = false;
+                        child.material.map.minFilter = THREE.LinearFilter;
+                    }
+                    
+                    // Use simpler material types
+                    if (child.material.isMeshStandardMaterial) {
+                        child.material.roughness = 0.5;
+                        child.material.metalness = 0.5;
+                    }
+                    
+                    // Disable features that impact performance
+                    child.material.flatShading = true;
+                    child.material.premultipliedAlpha = false;
+                }
+                
+                // Optimize geometry
+                if (child.geometry) {
+                    child.geometry.computeBoundingSphere();
+                    child.geometry.computeBoundingBox();
+                }
+            }
+        });
     }
 
     addFloatingAnimation() {
@@ -194,9 +256,17 @@ class WebARApp {
         this.rotationTime = 0;
         
         // Animation parameters for stability - reduced to minimize jitter
-        this.floatAmplitude = 0.008; // Further reduced for maximum stability
-        this.floatSpeed = 1.0; // Even slower floating
-        this.rotationSpeed = 0.15; // Minimal rotation for stability
+        if (this.isMobile) {
+            // Simplified animations for mobile performance
+            this.floatAmplitude = 0.005; // Reduced amplitude
+            this.floatSpeed = 0.8; // Slower speed
+            this.rotationSpeed = 0.1; // Minimal rotation
+        } else {
+            // Desktop animations
+            this.floatAmplitude = 0.008;
+            this.floatSpeed = 1.0;
+            this.rotationSpeed = 0.15;
+        }
     }
 
     createShadowPlane(parentGroup, modelScale) {
@@ -312,13 +382,11 @@ class WebARApp {
     onAppPause() {
         // App is being suspended - pause rendering to save resources
         this.isAppActive = false;
-        console.log('App paused - suspending rendering');
     }
 
     async onAppResume() {
         // App is resuming - reinitialize video and canvas
         this.isAppActive = true;
-        console.log('App resumed - reinitializing video and canvas');
         
         // Wait a bit for the browser to fully restore
         setTimeout(async () => {
@@ -342,11 +410,8 @@ class WebARApp {
             
             // Check if MindAR needs to be restarted
             if (this.mindarThree && !this.mindarThree.isStarted) {
-                console.log('Restarting MindAR...');
                 await this.mindarThree.start();
             }
-            
-            console.log('Video and canvas reinitialized successfully');
         } catch (error) {
             console.error('Failed to reinitialize video and canvas:', error);
         }
@@ -470,7 +535,6 @@ class WebARApp {
             this.videoElement = container.querySelector('video');
             
             if (!this.videoElement) {
-                console.warn('Video element not found, retrying...');
                 // Retry after a short delay
                 setTimeout(() => this.setupCompositeCanvas(), 500);
                 return;
@@ -489,31 +553,17 @@ class WebARApp {
             
             this.updateCanvasSize();
             
-            // Add video event listeners for better mobile handling
-            this.videoElement.addEventListener('loadedmetadata', () => {
-                console.log('Video metadata loaded');
-                this.updateCompositeCanvas();
-            });
+            // Add video event listeners for better mobile handling (reduced for performance)
+            const videoEvents = ['loadedmetadata', 'canplay', 'playing'];
+            if (!this.isMobile) {
+                // Add additional events only on desktop
+                videoEvents.push('loadeddata', 'canplaythrough');
+            }
             
-            this.videoElement.addEventListener('canplay', () => {
-                console.log('Video can play');
-                this.updateCompositeCanvas();
-            });
-            
-            this.videoElement.addEventListener('playing', () => {
-                console.log('Video is playing');
-                this.updateCompositeCanvas();
-            });
-            
-            // Add additional mobile-specific event listeners
-            this.videoElement.addEventListener('loadeddata', () => {
-                console.log('Video data loaded');
-                this.updateCompositeCanvas();
-            });
-            
-            this.videoElement.addEventListener('canplaythrough', () => {
-                console.log('Video can play through');
-                this.updateCompositeCanvas();
+            videoEvents.forEach(event => {
+                this.videoElement.addEventListener(event, () => {
+                    this.updateCompositeCanvas();
+                });
             });
             
             // Force initial update to ensure canvas has content
@@ -523,9 +573,16 @@ class WebARApp {
             
             // Add resize listener for responsive behavior (only once)
             if (!this.resizeListenerAdded) {
-                window.addEventListener('resize', () => {
-                    this.updateCanvasSize();
-                });
+                // Debounced resize handler for better performance
+                let resizeTimeout;
+                const debouncedResize = () => {
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(() => {
+                        this.updateCanvasSize();
+                    }, 250);
+                };
+                
+                window.addEventListener('resize', debouncedResize);
                 
                 // Add orientation change listener
                 window.addEventListener('orientationchange', () => {
@@ -537,7 +594,7 @@ class WebARApp {
                 this.resizeListenerAdded = true;
             }
             
-            console.log('Composite canvas setup complete');
+
 
         }, this.isAppActive === false ? 100 : 1000); // Shorter delay when resuming
     }
@@ -559,12 +616,31 @@ class WebARApp {
         let targetWidth = viewportWidth * pixelRatio;
         let targetHeight = viewportHeight * pixelRatio;
         
-        // Ensure minimum quality for small screens
-        const minWidth = 320 * pixelRatio;
-        const minHeight = 240 * pixelRatio;
-        
-        targetWidth = Math.max(targetWidth, minWidth);
-        targetHeight = Math.max(targetHeight, minHeight);
+        // Mobile-specific size optimization
+        if (this.isMobile) {
+            // Limit canvas size on mobile for better performance
+            const maxMobileWidth = 1280;
+            const maxMobileHeight = 720;
+            
+            if (targetWidth > maxMobileWidth) {
+                const scale = maxMobileWidth / targetWidth;
+                targetWidth = maxMobileWidth;
+                targetHeight = targetHeight * scale;
+            }
+            
+            if (targetHeight > maxMobileHeight) {
+                const scale = maxMobileHeight / targetHeight;
+                targetHeight = maxMobileHeight;
+                targetWidth = targetWidth * scale;
+            }
+        } else {
+            // Ensure minimum quality for small screens
+            const minWidth = 320 * pixelRatio;
+            const minHeight = 240 * pixelRatio;
+            
+            targetWidth = Math.max(targetWidth, minWidth);
+            targetHeight = Math.max(targetHeight, minHeight);
+        }
         
         // Set canvas dimensions to match viewport size
         this.compositeCanvas.width = targetWidth;
@@ -581,7 +657,7 @@ class WebARApp {
         this.compositeCanvas.style.zIndex = '1000';
         this.compositeCanvas.style.pointerEvents = 'none';
         
-        console.log(`Canvas size updated: ${targetWidth}x${targetHeight} (CSS: ${viewportWidth}x${viewportHeight})`);
+
     }
 
     render() {
@@ -596,7 +672,7 @@ class WebARApp {
         const deltaTime = Math.min((currentTime - this.lastFrameTime) / 1000, 0.033); // Cap at 30fps minimum
         this.lastFrameTime = currentTime;
         
-        // Performance monitoring
+        // Performance monitoring (only log occasionally)
         this.updatePerformanceMonitor(currentTime);
         
         requestAnimationFrame(() => this.render());
@@ -638,8 +714,8 @@ class WebARApp {
                 const dampedRotation = rotationSin * 0.05; // Reduced rotation amplitude
                 this.model.rotation.y = this.initialModelRotationY + dampedRotation;
                 
-                // Animate shadow with smoother transitions
-                if (this.shadowPlane) {
+                // Animate shadow with smoother transitions (only on desktop)
+                if (this.shadowPlane && !this.isMobile) {
                     const normalizedFloat = (floatOffset / this.floatAmplitude); // -1 to 1
                     const shadowOpacity = 0.25 - (normalizedFloat * 0.1); // More subtle shadow changes
                     this.shadowPlane.material.opacity = Math.max(0.15, Math.min(0.35, shadowOpacity));
@@ -662,9 +738,13 @@ class WebARApp {
         this.renderer.clear();
         this.renderer.render(this.scene, this.camera);
         
-        // Always update composite canvas to ensure continuous recording
-        if (this.compositeCanvas) {
+        // Optimize canvas updates - only update when necessary
+        const shouldUpdateCanvas = this.isRecording || 
+                                 (currentTime - this.lastCanvasUpdate > this.canvasUpdateInterval);
+        
+        if (shouldUpdateCanvas && this.compositeCanvas) {
             this.updateCompositeCanvas();
+            this.lastCanvasUpdate = currentTime;
         }
         
         // Force additional canvas updates during recording for better frame capture
@@ -710,10 +790,7 @@ class WebARApp {
                                this.videoElement.videoWidth > 0 && 
                                this.videoElement.videoHeight > 0;
             
-            // Only log video status during recording to reduce console spam
-            if (this.isRecording) {
-                console.log(`Video status: width=${this.videoElement?.videoWidth}, height=${this.videoElement?.videoHeight}, readyState=${this.videoElement?.readyState}, paused=${this.videoElement?.paused}, ended=${this.videoElement?.ended}`);
-            }
+
             
             // Draw video background
             if (isVideoReady) {
@@ -760,24 +837,14 @@ class WebARApp {
                         offsetX, offsetY, drawWidth, drawHeight
                     );
                     
-                    // Only log 3D content drawing during recording for debugging
-                    if (this.isRecording) {
-                        console.log(`3D content drawn: ${drawWidth}x${drawHeight} at (${offsetX}, ${offsetY})`);
-                    }
+
 
                 } catch (error) {
                     console.error('Error drawing 3D content:', error);
                 }
             }
             
-            // Debug: Check if canvas has content (only during recording)
-            if (this.isRecording) {
-                const imageData = this.compositeCtx.getImageData(0, 0, this.compositeCanvas.width, this.compositeCanvas.height);
-                const hasContent = imageData.data.some(pixel => pixel !== 0);
-                if (!hasContent) {
-                    console.warn('Composite canvas appears to be empty during recording');
-                }
-            }
+
         } catch (error) {
             console.error('Error in updateCompositeCanvas:', error);
         }
@@ -822,10 +889,7 @@ class WebARApp {
                 drawHeight
             );
             
-            // Only log video drawing during recording for debugging
-            if (this.isRecording) {
-                console.log(`Video drawn: ${drawWidth}x${drawHeight} at (${offsetX}, ${offsetY})`);
-            }
+
 
         } catch (error) {
             console.error('Error drawing video:', error);
@@ -868,10 +932,8 @@ class WebARApp {
                     }
                     
                     if (hasVideoContent) {
-                        console.log(`Taking screenshot from composite canvas with video (${isMobile ? 'mobile' : 'desktop'})`);
                         this.captureFromCanvas(this.compositeCanvas, 'composite');
                     } else {
-                        console.log(`Taking screenshot from renderer canvas (no video) (${isMobile ? 'mobile' : 'desktop'})`);
                         this.captureFromCanvas(this.renderer.domElement, 'renderer');
                     }
                 });
@@ -1073,7 +1135,6 @@ class WebARApp {
             
             // Ensure composite canvas is properly set up and updated
             if (!this.compositeCanvas || !this.compositeCtx) {
-                console.log('Composite canvas not ready, setting up...');
                 this.setupCompositeCanvas();
                 // Wait for setup to complete
                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1081,7 +1142,6 @@ class WebARApp {
             
             // Wait for video to be ready before recording (with mobile fallback)
             if (this.videoElement) {
-                console.log('Waiting for video to be ready...');
                 await this.waitForVideoReady();
             }
             
@@ -1092,7 +1152,6 @@ class WebARApp {
             
             // Simplified canvas selection - always use composite canvas if available
             if (!canvasToRecord) {
-                console.log('Composite canvas not available, using renderer canvas');
                 canvasToRecord = this.renderer.domElement;
             }
             
@@ -1126,10 +1185,8 @@ class WebARApp {
             }
             
             let selectedMimeType = null;
-            console.log(`Available MIME types for ${isMobile ? 'mobile' : 'desktop'}:`);
             for (const mimeType of mimeTypes) {
                 const isSupported = MediaRecorder.isTypeSupported(mimeType);
-                console.log(`  ${mimeType}: ${isSupported ? 'SUPPORTED' : 'NOT SUPPORTED'}`);
                 if (isSupported && !selectedMimeType) {
                     selectedMimeType = mimeType;
                 }
@@ -1137,11 +1194,8 @@ class WebARApp {
             
             // Ensure we have a valid MIME type
             if (!selectedMimeType) {
-                console.log('No supported MIME type found, using default');
                 selectedMimeType = 'video/webm';
             }
-            
-            console.log(`Selected MIME type: ${selectedMimeType} (${isMobile ? 'mobile' : 'desktop'})`);
             
             if (!selectedMimeType) {
                 throw new Error('No supported video format found');
@@ -1155,8 +1209,7 @@ class WebARApp {
                 throw new Error('No video tracks available');
             }
             
-            console.log(`Recording from canvas: ${canvasToRecord.width}x${canvasToRecord.height}`);
-            console.log(`Canvas type: ${canvasToRecord === this.compositeCanvas ? 'composite' : 'renderer'}`);
+
             
             // Clear any previous recording data
             this.recordedChunks = [];
@@ -1166,17 +1219,15 @@ class WebARApp {
                 videoBitsPerSecond: 4000000 // Increased to 4 Mbps for better quality
             });
             
-            console.log(`MediaRecorder created with MIME type: ${this.mediaRecorder.mimeType}`);
+
 
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
                     this.recordedChunks.push(event.data);
-                    console.log(`Recording chunk received: ${event.data.size} bytes, total chunks: ${this.recordedChunks.length}`);
                 }
             };
 
             this.mediaRecorder.onstop = () => {
-                console.log(`Recording stopped. Total chunks: ${this.recordedChunks.length}`);
                 this.saveRecording();
             };
 
@@ -1216,8 +1267,9 @@ class WebARApp {
                 this.renderer.render(this.scene, this.camera);
                 this.updateCompositeCanvas();
                 
-                // Schedule next update
-                setTimeout(recordingUpdateLoop, 16); // ~60fps during recording
+                // Schedule next update - use different intervals for mobile vs desktop
+                const updateInterval = this.isMobile ? 33 : 16; // ~30fps for mobile, ~60fps for desktop
+                setTimeout(recordingUpdateLoop, updateInterval);
             }
         };
         
@@ -1228,7 +1280,6 @@ class WebARApp {
     stopRecording() {
         if (this.mediaRecorder && this.isRecording) {
             try {
-                console.log('Stopping recording...');
                 this.mediaRecorder.stop();
                 this.isRecording = false;
                 this.resetRecordingUI();
@@ -1249,15 +1300,12 @@ class WebARApp {
 
     saveRecording() {
         try {
-            console.log(`Attempting to save recording with ${this.recordedChunks.length} chunks`);
-            
             if (!this.recordedChunks.length) {
                 throw new Error('No recording data available');
             }
             
             // Check total size of all chunks
             const totalSize = this.recordedChunks.reduce((sum, chunk) => sum + chunk.size, 0);
-            console.log(`Total recording size: ${totalSize} bytes`);
             
             if (totalSize === 0) {
                 throw new Error('Recording is empty (0 bytes)');
@@ -1271,12 +1319,10 @@ class WebARApp {
             
             if (this.mediaRecorder && this.mediaRecorder.mimeType) {
                 const recorderMimeType = this.mediaRecorder.mimeType.toLowerCase();
-                console.log(`MediaRecorder actual MIME type: ${this.mediaRecorder.mimeType}`);
                 
                 if (recorderMimeType.includes('webm')) {
                     if (isMobile) {
                         // Force MP4 for mobile even if MediaRecorder uses WebM
-                        console.log('Mobile device: Converting WebM to MP4 format');
                         fileExtension = 'mp4';
                         mimeType = 'video/mp4';
                     } else {
@@ -1289,19 +1335,17 @@ class WebARApp {
                 } else {
                     // Fallback: check if we're on mobile and force MP4
                     if (isMobile) {
-                        console.log('Mobile device detected, forcing MP4 format');
                         fileExtension = 'mp4';
                         mimeType = 'video/mp4';
                     }
                 }
             } else if (isMobile) {
                 // No MIME type specified, force MP4 for mobile
-                console.log('Mobile device: No MIME type specified, forcing MP4 format');
                 fileExtension = 'mp4';
                 mimeType = 'video/mp4';
             }
             
-            console.log(`Using MIME type: ${mimeType}, file extension: ${fileExtension}`);
+
             
             const blob = new Blob(this.recordedChunks, { type: mimeType });
             
@@ -1309,7 +1353,7 @@ class WebARApp {
                 throw new Error('Recording blob is empty');
             }
             
-            console.log(`Blob created successfully: ${blob.size} bytes`);
+
             
             const url = URL.createObjectURL(blob);
             
@@ -1423,13 +1467,10 @@ class WebARApp {
                 }
                 
                 if (isReady) {
-                    console.log(`Video is ready for recording (${isMobile ? 'mobile' : 'desktop'}, attempts: ${attempts})`);
                     resolve();
                 } else if (attempts >= maxAttempts) {
-                    console.log(`Video ready timeout (${isMobile ? 'mobile' : 'desktop'}), proceeding anyway`);
                     resolve();
                 } else {
-                    console.log(`Video not ready yet, retrying... (${isMobile ? 'mobile' : 'desktop'}, ${attempts}/${maxAttempts})`);
                     setTimeout(checkVideoReady, 100);
                 }
             };
