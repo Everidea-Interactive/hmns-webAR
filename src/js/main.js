@@ -152,7 +152,7 @@ class WebARApp {
             this.model.position.set(
                 -center.x * scale, // Center horizontally
                 -center.y * scale + size.y * scale * 0.5, // Place on top of target
-                0.02 // Slightly above the target plane for stability
+                0.05 // Higher above the target plane for better mobile visibility
             );
             
             // Keep original rotation (no rotation override)
@@ -174,6 +174,19 @@ class WebARApp {
             if (!this.isMobile) {
                 this.createShadowPlane(anchor.group, scale);
             }
+            
+            // Ensure model is visible before adding to anchor
+            this.model.visible = true;
+            this.model.traverse((child) => {
+                if (child.isMesh) {
+                    child.visible = true;
+                    if (child.material) {
+                        child.material.visible = true;
+                        child.material.transparent = false;
+                        child.material.opacity = 1.0;
+                    }
+                }
+            });
             
             anchor.group.add(this.model);
             
@@ -227,16 +240,23 @@ class WebARApp {
         }
 
         // Add optimized lighting for better 3D model appearance
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // Increased ambient light
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); // Increased ambient light for mobile
         this.scene.add(ambientLight);
 
-        // Main directional light - simplified for mobile
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        // Main directional light - enhanced for mobile visibility
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // Increased intensity
         directionalLight.position.set(2, 2, 1);
         if (!this.isMobile) {
             directionalLight.castShadow = true;
         }
         this.scene.add(directionalLight);
+        
+        // Add additional fill light for mobile to ensure model visibility
+        if (this.isMobile) {
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            fillLight.position.set(-1, 1, 1);
+            this.scene.add(fillLight);
+        }
         
         // Only add additional lights on desktop for better performance
         if (!this.isMobile) {
@@ -271,8 +291,13 @@ class WebARApp {
                         child.material.metalness = 0.5;
                     }
                     
+                    // Ensure material is visible on mobile
+                    child.material.transparent = false;
+                    child.material.opacity = 1.0;
+                    child.material.visible = true;
+                    
                     // Disable features that impact performance
-                    child.material.flatShading = true;
+                    child.material.flatShading = false; // Keep smooth shading for better appearance
                     child.material.premultipliedAlpha = false;
                 }
                 
@@ -281,6 +306,9 @@ class WebARApp {
                     child.geometry.computeBoundingSphere();
                     child.geometry.computeBoundingBox();
                 }
+                
+                // Ensure mesh is visible
+                child.visible = true;
             }
         });
     }
@@ -345,7 +373,7 @@ class WebARApp {
             this.rotationHistory = [];
         }
         
-        // Ensure model is fully opaque when target is found
+        // Ensure model is fully visible when target is found
         if (this.model) {
             this.model.traverse((child) => {
                 if (child.isMesh && child.material) {
@@ -353,11 +381,18 @@ class WebARApp {
                     if (!child.material.userData.originalOpacity) {
                         child.material.userData.originalOpacity = child.material.opacity || 1.0;
                     }
-                    // Set to fully opaque immediately
-                    child.material.transparent = true;
-                    child.material.opacity = child.material.userData.originalOpacity;
+                    // Set to fully visible immediately
+                    child.material.transparent = false;
+                    child.material.opacity = 1.0;
+                    child.material.visible = true;
+                    child.visible = true;
                 }
             });
+        }
+        
+        // Debug logging for mobile
+        if (this.isMobile) {
+            console.log('Target found - Model should be visible');
         }
     }
 
@@ -733,10 +768,13 @@ class WebARApp {
             
             // Handle visibility based on target detection
             if (this.isTargetVisible) {
-                // Ensure model is fully opaque when target is visible
+                // Ensure model is fully visible when target is visible
                 this.model.traverse((child) => {
-                    if (child.isMesh && child.material && child.material.userData.originalOpacity) {
-                        child.material.opacity = child.material.userData.originalOpacity;
+                    if (child.isMesh && child.material) {
+                        child.material.transparent = false;
+                        child.material.opacity = 1.0;
+                        child.material.visible = true;
+                        child.visible = true;
                     }
                 });
                 
@@ -764,10 +802,11 @@ class WebARApp {
                     this.shadowPlane.scale.set(shadowScale, shadowScale, shadowScale);
                 }
             } else {
-                // Fade out model when target is lost
+                // Hide model when target is lost
                 this.model.traverse((child) => {
                     if (child.isMesh && child.material) {
-                        child.material.opacity = Math.max(0, child.material.opacity - deltaTime * 2); // 2x speed fade out
+                        child.material.visible = false;
+                        child.visible = false;
                     }
                 });
             }
