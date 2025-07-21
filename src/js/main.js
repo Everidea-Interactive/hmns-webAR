@@ -120,7 +120,7 @@ class WebARApp {
         try {
             const gltf = await new Promise((resolve, reject) => {
                 loader.load(
-                    './src/assets/models/softmind/scene.gltf',
+                    './src/assets/models/parfume/parfume.glb', // CHANGED: now loads parfume.glb (GLB model)
                     resolve,
                     undefined,
                     reject
