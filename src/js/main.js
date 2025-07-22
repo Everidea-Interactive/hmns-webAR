@@ -1203,15 +1203,28 @@ class WebARApp {
                 throw new Error('Recording not supported in this browser');
             }
             
+            // Detect device type
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            
             // Ensure composite canvas is properly set up and updated
             if (!this.compositeCanvas || !this.compositeCtx) {
                 this.setupCompositeCanvas();
-                // Wait for setup to complete
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                // Longer wait for iOS to ensure proper initialization
+                const waitTime = isIOS ? 2000 : 1000;
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
+            
+            // Force canvas update multiple times for iOS stability
+            if (isIOS) {
+                for (let i = 0; i < 3; i++) {
+                    this.updateCompositeCanvas();
+                    await new Promise(resolve => requestAnimationFrame(resolve));
+                }
             }
             
             // Optimize canvas for recording on mobile
-            if (this.isMobile) {
+            if (isMobile) {
                 this.optimizeCanvasForRecording();
             }
             
@@ -1223,8 +1236,11 @@ class WebARApp {
             // Force update composite canvas before recording
             this.updateCompositeCanvas();
             
-            // Wait a frame to ensure canvas is properly updated
-            await new Promise(resolve => requestAnimationFrame(resolve));
+            // Multiple frame wait for iOS to ensure stability
+            const frameWaits = isIOS ? 5 : 1;
+            for (let i = 0; i < frameWaits; i++) {
+                await new Promise(resolve => requestAnimationFrame(resolve));
+            }
             
             let canvasToRecord = this.compositeCanvas;
             
@@ -1237,12 +1253,19 @@ class WebARApp {
                 throw new Error('Canvas stream capture not supported');
             }
             
-            // Prioritize MP4 format for better smartphone compatibility
-            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-            
+            // Enhanced MIME type detection with iOS-specific fallbacks
             let mimeTypes;
-            if (isMobile) {
-                // Mobile-first MIME types with strong MP4 preference
+            if (isIOS) {
+                // iOS Safari specific MIME types - prioritize MP4 heavily
+                mimeTypes = [
+                    'video/mp4',
+                    'video/mp4;codecs=avc1.42E01E',
+                    'video/mp4;codecs=avc1',
+                    'video/webm;codecs=vp8',
+                    'video/webm'
+                ];
+            } else if (isMobile) {
+                // Other mobile devices
                 mimeTypes = [
                     'video/mp4;codecs=h264',
                     'video/mp4;codecs=avc1',
@@ -1264,23 +1287,40 @@ class WebARApp {
             
             let selectedMimeType = null;
             for (const mimeType of mimeTypes) {
-                const isSupported = MediaRecorder.isTypeSupported(mimeType);
-                if (isSupported && !selectedMimeType) {
+                if (MediaRecorder.isTypeSupported(mimeType)) {
                     selectedMimeType = mimeType;
+                    break;
                 }
             }
             
-            // Ensure we have a valid MIME type
+            // Fallback MIME type selection
+            if (!selectedMimeType) {
+                // Try basic types without codecs
+                const basicTypes = ['video/mp4', 'video/webm'];
+                for (const basicType of basicTypes) {
+                    if (MediaRecorder.isTypeSupported(basicType)) {
+                        selectedMimeType = basicType;
+                        break;
+                    }
+                }
+            }
+            
+            // Final fallback
             if (!selectedMimeType) {
                 selectedMimeType = 'video/webm';
+                console.warn('Using fallback MIME type - recording may not work on all devices');
             }
             
-            if (!selectedMimeType) {
-                throw new Error('No supported video format found');
+            // iOS-optimized stream settings
+            let frameRate;
+            if (isIOS) {
+                frameRate = 25; // Lower frame rate for iOS stability
+            } else if (isMobile) {
+                frameRate = 30;
+            } else {
+                frameRate = 60;
             }
             
-            // Optimized stream settings with higher frame rate for better capture
-            const frameRate = this.isMobile ? 30 : 60; // Increased mobile frame rate
             const stream = canvasToRecord.captureStream(frameRate);
             
             // Verify stream has video tracks
@@ -1288,42 +1328,94 @@ class WebARApp {
                 throw new Error('No video tracks available');
             }
             
+            // Enhanced stream validation for iOS
+            if (isIOS) {
+                const videoTrack = stream.getVideoTracks()[0];
+                if (!videoTrack || videoTrack.readyState !== 'live') {
+                    // Try to restart the stream
+                    stream.getTracks().forEach(track => track.stop());
+                    const newStream = canvasToRecord.captureStream(frameRate);
+                    if (!newStream.getVideoTracks().length) {
+                        throw new Error('Failed to create stable video stream');
+                    }
+                }
+            }
+            
             // Clear any previous recording data
             this.recordedChunks = [];
             
-            // Mobile-optimized MediaRecorder settings
+            // iOS-optimized MediaRecorder settings
             const recorderOptions = {
                 mimeType: selectedMimeType
             };
             
-            if (this.isMobile) {
-                // Lower bitrate for mobile to reduce lag
-                recorderOptions.videoBitsPerSecond = 1500000; // 1.5 Mbps for mobile
+            if (isIOS) {
+                // Very conservative settings for iOS
+                recorderOptions.videoBitsPerSecond = 800000; // 800 Kbps for iOS
+            } else if (isMobile) {
+                // Moderate settings for other mobile devices
+                recorderOptions.videoBitsPerSecond = 1500000; // 1.5 Mbps
             } else {
                 // Higher bitrate for desktop
-                recorderOptions.videoBitsPerSecond = 4000000; // 4 Mbps for desktop
+                recorderOptions.videoBitsPerSecond = 4000000; // 4 Mbps
             }
             
             this.mediaRecorder = new MediaRecorder(stream, recorderOptions);
 
+            // Enhanced event handlers with iOS-specific error handling
             this.mediaRecorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
                     this.recordedChunks.push(event.data);
+                    console.log(`Chunk received: ${event.data.size} bytes`);
+                } else {
+                    console.warn('Received empty data chunk');
                 }
             };
 
             this.mediaRecorder.onstop = () => {
-                this.saveRecording();
+                console.log(`Recording stopped. Total chunks: ${this.recordedChunks.length}`);
+                // Add a small delay before saving on iOS
+                if (isIOS) {
+                    setTimeout(() => this.saveRecording(), 500);
+                } else {
+                    this.saveRecording();
+                }
             };
 
             this.mediaRecorder.onerror = (event) => {
                 console.error('MediaRecorder error:', event.error);
                 this.showStatus('Recording error occurred', true);
                 this.resetRecordingUI();
+                
+                // Cleanup on error
+                if (this.mediaRecorder) {
+                    try {
+                        this.mediaRecorder.stop();
+                    } catch (e) {
+                        console.error('Error stopping recorder:', e);
+                    }
+                }
+                
+                // Stop all tracks
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
             };
 
-            // Optimized timeslice settings for better frame capture
-            const timeslice = this.isMobile ? 100 : 50; // Reduced chunk size for more frequent updates
+            this.mediaRecorder.onstart = () => {
+                console.log('MediaRecorder started successfully');
+            };
+
+            // iOS-optimized timeslice settings
+            let timeslice;
+            if (isIOS) {
+                timeslice = 250; // Larger chunks for iOS stability
+            } else if (isMobile) {
+                timeslice = 100;
+            } else {
+                timeslice = 50;
+            }
+            
             this.mediaRecorder.start(timeslice);
             this.isRecording = true;
             
@@ -1403,9 +1495,49 @@ class WebARApp {
     }
 
     stopRecording() {
+        console.log('Attempting to stop recording');
+        
         if (this.mediaRecorder && this.isRecording) {
             try {
-                this.mediaRecorder.stop();
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                
+                // iOS-specific stopping procedure
+                if (isIOS) {
+                    console.log('Stopping recording with iOS-specific handling');
+                    
+                    // Ensure we have chunks before stopping
+                    if (this.recordedChunks.length === 0) {
+                        console.warn('No chunks recorded yet, waiting briefly before stopping');
+                        setTimeout(() => {
+                            this.stopRecording();
+                        }, 500);
+                        return;
+                    }
+                    
+                    // Check MediaRecorder state
+                    console.log(`MediaRecorder state: ${this.mediaRecorder.state}`);
+                    
+                    if (this.mediaRecorder.state === 'recording') {
+                        this.mediaRecorder.stop();
+                    } else if (this.mediaRecorder.state === 'paused') {
+                        this.mediaRecorder.resume();
+                        setTimeout(() => {
+                            if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+                                this.mediaRecorder.stop();
+                            }
+                        }, 100);
+                    } else {
+                        console.warn(`MediaRecorder in unexpected state: ${this.mediaRecorder.state}`);
+                        // Force save with existing chunks
+                        if (this.recordedChunks.length > 0) {
+                            this.saveRecording();
+                        }
+                    }
+                } else {
+                    // Standard stopping for other platforms
+                    this.mediaRecorder.stop();
+                }
+                
                 this.isRecording = false;
                 
                 // Restore original canvas size on mobile
@@ -1415,11 +1547,38 @@ class WebARApp {
                 
                 this.resetRecordingUI();
                 this.showStatus('Recording stopped');
+                
+                // For iOS, add additional safety check
+                if (isIOS) {
+                    setTimeout(() => {
+                        if (this.recordedChunks.length === 0) {
+                            console.error('No recording chunks available after stopping');
+                            this.showStatus('Recording may have failed - no data captured', true);
+                        }
+                    }, 1000);
+                }
+                
             } catch (error) {
                 console.error('Error stopping recording:', error);
                 this.showStatus('Error stopping recording', true);
                 this.resetRecordingUI();
+                
+                // Cleanup on error
+                this.isRecording = false;
+                
+                // Try to force save any existing chunks
+                if (this.recordedChunks.length > 0) {
+                    console.log('Attempting to save existing chunks despite error');
+                    try {
+                        this.saveRecording();
+                    } catch (saveError) {
+                        console.error('Failed to save existing chunks:', saveError);
+                    }
+                }
             }
+        } else {
+            console.warn('No active recording to stop');
+            this.resetRecordingUI();
         }
     }
 
@@ -1448,110 +1607,97 @@ class WebARApp {
 
     saveRecording() {
         try {
+            console.log(`Attempting to save recording with ${this.recordedChunks.length} chunks`);
+            
             if (!this.recordedChunks.length) {
                 throw new Error('No recording data available');
             }
             
-            // Check total size of all chunks
-            const totalSize = this.recordedChunks.reduce((sum, chunk) => sum + chunk.size, 0);
+            // Check total size of all chunks with detailed logging
+            const chunkSizes = this.recordedChunks.map(chunk => chunk.size);
+            const totalSize = chunkSizes.reduce((sum, size) => sum + size, 0);
+            console.log(`Chunk sizes: [${chunkSizes.join(', ')}], Total: ${totalSize} bytes`);
             
             if (totalSize === 0) {
                 throw new Error('Recording is empty (0 bytes)');
             }
             
-            // Determine file extension and MIME type based on the MediaRecorder's MIME type
+            // Enhanced device detection
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            
+            // Determine file extension and MIME type with enhanced iOS handling
             let fileExtension = 'mp4';
-            let mimeType = 'video/mp4';
+            let blobMimeType = 'video/mp4';
             
             if (this.mediaRecorder && this.mediaRecorder.mimeType) {
                 const recorderMimeType = this.mediaRecorder.mimeType.toLowerCase();
+                console.log(`MediaRecorder MIME type: ${recorderMimeType}`);
                 
                 if (recorderMimeType.includes('webm')) {
-                    if (isMobile) {
-                        // Force MP4 for mobile even if MediaRecorder uses WebM
+                    if (isIOS || isSafari) {
+                        // Always use MP4 for iOS/Safari for better compatibility
                         fileExtension = 'mp4';
-                        mimeType = 'video/mp4';
+                        blobMimeType = 'video/mp4';
+                        console.log('Forcing MP4 for iOS/Safari compatibility');
+                    } else if (isMobile) {
+                        // Use original type for other mobile devices that support it
+                        fileExtension = 'webm';
+                        blobMimeType = recorderMimeType;
                     } else {
                         fileExtension = 'webm';
-                        mimeType = 'video/webm';
+                        blobMimeType = recorderMimeType;
                     }
                 } else if (recorderMimeType.includes('mp4')) {
                     fileExtension = 'mp4';
-                    mimeType = 'video/mp4';
+                    blobMimeType = recorderMimeType;
                 } else {
-                    // Fallback: check if we're on mobile and force MP4
-                    if (isMobile) {
+                    // Unknown MIME type - use safe defaults
+                    if (isIOS || isSafari || isMobile) {
                         fileExtension = 'mp4';
-                        mimeType = 'video/mp4';
+                        blobMimeType = 'video/mp4';
+                    } else {
+                        fileExtension = 'webm';
+                        blobMimeType = 'video/webm';
                     }
                 }
-            } else if (isMobile) {
-                // No MIME type specified, force MP4 for mobile
+            } else if (isIOS || isSafari || isMobile) {
+                // No MIME type specified, use MP4 for mobile/iOS
                 fileExtension = 'mp4';
-                mimeType = 'video/mp4';
+                blobMimeType = 'video/mp4';
             }
             
-
+            console.log(`Using blob MIME type: ${blobMimeType}, file extension: ${fileExtension}`);
             
-            const blob = new Blob(this.recordedChunks, { type: mimeType });
+            // Create blob with error handling
+            let blob;
+            try {
+                blob = new Blob(this.recordedChunks, { type: blobMimeType });
+                console.log(`Blob created successfully: ${blob.size} bytes, type: ${blob.type}`);
+            } catch (blobError) {
+                console.error('Failed to create blob with specified type, trying fallback:', blobError);
+                // Fallback: create blob without specific type
+                blob = new Blob(this.recordedChunks);
+                console.log(`Fallback blob created: ${blob.size} bytes`);
+            }
             
             if (blob.size === 0) {
                 throw new Error('Recording blob is empty');
             }
             
-
-            
+            // Enhanced iOS handling with multiple fallback strategies
             const url = URL.createObjectURL(blob);
+            console.log('Object URL created successfully');
             
             if (isIOS) {
-                // iOS Safari has limitations with download links, use alternative approach
-                try {
-                    // Create a new window/tab to display the video
-                    const newWindow = window.open();
-                    newWindow.document.write(`
-                        <html>
-                            <head>
-                                <title>Recording</title>
-                                <style>
-                                    body { margin: 0; padding: 20px; background: #f0f0f0; }
-                                    video { max-width: 100%; height: auto; border: 1px solid #ccc; }
-                                    .download-btn { 
-                                        display: block; 
-                                        margin: 20px 0; 
-                                        padding: 10px 20px; 
-                                        background: #007AFF; 
-                                        color: white; 
-                                        text-decoration: none; 
-                                        border-radius: 5px; 
-                                        text-align: center; 
-                                    }
-                                </style>
-                            </head>
-                            <body>
-                                <video controls autoplay>
-                                    <source src="${url}" type="${mimeType}">
-                                    Your browser does not support the video tag.
-                                </video>
-                                <a href="${url}" download="webAR-recording-${Date.now()}.${fileExtension}" class="download-btn">
-                                    Download Recording
-                                </a>
-                                <p>Tap and hold the video above to save it to your device.</p>
-                            </body>
-                        </html>
-                    `);
-                    newWindow.document.close();
-                } catch (error) {
-                    console.error('Failed to open video in new window:', error);
-                    // Fallback to standard download
-                    this.standardDownloadRecording(url, fileExtension);
-                }
+                this.handleIOSDownload(url, fileExtension, blobMimeType, blob);
             } else {
                 // Standard download for other devices
                 this.standardDownloadRecording(url, fileExtension);
             }
             
+            // Clear chunks after successful processing
             this.recordedChunks = [];
             
             this.showStatus('Recording saved!');
@@ -1561,6 +1707,184 @@ class WebARApp {
             
             // Clear chunks on error to prevent accumulation
             this.recordedChunks = [];
+        }
+    }
+
+    handleIOSDownload(url, fileExtension, mimeType, blob) {
+        console.log('Handling iOS download');
+        
+        // Strategy 1: Try direct download first (works in some iOS versions)
+        const tryDirectDownload = () => {
+            try {
+                const link = document.createElement('a');
+                link.download = `webAR-recording-${Date.now()}.${fileExtension}`;
+                link.href = url;
+                link.style.display = 'none';
+                
+                // Add click handlers for iOS
+                link.onclick = (e) => {
+                    console.log('Download link clicked');
+                };
+                
+                document.body.appendChild(link);
+                
+                // Force click with iOS-specific timing
+                setTimeout(() => {
+                    link.click();
+                    console.log('Direct download attempted');
+                    
+                    // Cleanup
+                    setTimeout(() => {
+                        if (document.body.contains(link)) {
+                            document.body.removeChild(link);
+                        }
+                    }, 1000);
+                }, 100);
+                
+                return true;
+            } catch (error) {
+                console.error('Direct download failed:', error);
+                return false;
+            }
+        };
+        
+        // Strategy 2: Open in new window with multiple options
+        const tryNewWindowDownload = () => {
+            try {
+                const newWindow = window.open();
+                if (!newWindow) {
+                    console.error('Failed to open new window (popup blocked?)');
+                    return false;
+                }
+                
+                newWindow.document.write(`
+                    <!DOCTYPE html>
+                    <html>
+                        <head>
+                            <title>AR Recording</title>
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                            <style>
+                                body { 
+                                    margin: 0; 
+                                    padding: 20px; 
+                                    background: #f8f9fa; 
+                                    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                                }
+                                .container {
+                                    max-width: 600px;
+                                    margin: 0 auto;
+                                    text-align: center;
+                                }
+                                video { 
+                                    max-width: 100%; 
+                                    height: auto; 
+                                    border: 1px solid #ddd; 
+                                    border-radius: 8px;
+                                    margin: 20px 0;
+                                }
+                                .download-btn { 
+                                    display: inline-block; 
+                                    margin: 15px; 
+                                    padding: 12px 24px; 
+                                    background: #007AFF; 
+                                    color: white; 
+                                    text-decoration: none; 
+                                    border-radius: 8px; 
+                                    font-size: 16px;
+                                    transition: background 0.2s;
+                                }
+                                .download-btn:hover {
+                                    background: #0051D5;
+                                }
+                                .download-btn:active {
+                                    background: #004494;
+                                }
+                                .instructions {
+                                    background: #e3f2fd;
+                                    padding: 15px;
+                                    border-radius: 8px;
+                                    margin: 20px 0;
+                                    font-size: 14px;
+                                    line-height: 1.5;
+                                }
+                                .close-btn {
+                                    background: #6c757d;
+                                    margin-top: 20px;
+                                }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="container">
+                                <h2>AR Recording</h2>
+                                <video controls playsinline>
+                                    <source src="${url}" type="${mimeType}">
+                                    Your browser does not support the video tag.
+                                </video>
+                                
+                                <div>
+                                    <a href="${url}" download="webAR-recording-${Date.now()}.${fileExtension}" class="download-btn">
+                                        📥 Download Recording
+                                    </a>
+                                </div>
+                                
+                                <div class="instructions">
+                                    <strong>To save on iOS:</strong><br>
+                                    1. Tap "Download Recording" button above<br>
+                                    2. Or tap and hold the video, then select "Save to Photos"<br>
+                                    3. Or use the share button in Safari to save to Files
+                                </div>
+                                
+                                <button onclick="window.close()" class="download-btn close-btn">
+                                    Close Window
+                                </button>
+                            </div>
+                            
+                            <script>
+                                // Auto-attempt download after a short delay
+                                setTimeout(() => {
+                                    const downloadLink = document.querySelector('a[download]');
+                                    if (downloadLink) {
+                                        console.log('Auto-triggering download');
+                                        downloadLink.click();
+                                    }
+                                }, 1000);
+                                
+                                // Handle video load errors
+                                const video = document.querySelector('video');
+                                video.onerror = () => {
+                                    console.error('Video failed to load');
+                                    video.style.display = 'none';
+                                    const container = document.querySelector('.container');
+                                    container.innerHTML += '<p style="color: red;">Video playback failed. Please try the download button.</p>';
+                                };
+                                
+                                video.onloadeddata = () => {
+                                    console.log('Video loaded successfully');
+                                };
+                            </script>
+                        </body>
+                    </html>
+                `);
+                newWindow.document.close();
+                
+                return true;
+            } catch (error) {
+                console.error('New window download failed:', error);
+                return false;
+            }
+        };
+        
+        // Try strategies in order
+        const directDownloadSuccess = tryDirectDownload();
+        
+        // Always show the new window for iOS as backup
+        setTimeout(() => {
+            tryNewWindowDownload();
+        }, 500);
+        
+        if (!directDownloadSuccess) {
+            console.log('Direct download may have failed, showing instructions');
+            this.showStatus('Recording ready - check for download or new window', false);
         }
     }
 
@@ -1585,28 +1909,55 @@ class WebARApp {
     async waitForVideoReady() {
         return new Promise((resolve) => {
             if (!this.videoElement) {
+                console.log('No video element found, proceeding without video');
                 resolve();
                 return;
             }
             
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+            
             let attempts = 0;
-            const maxAttempts = isMobile ? 50 : 30; // 5 seconds for mobile, 3 seconds for desktop
+            let maxAttempts;
+            
+            if (isIOS) {
+                maxAttempts = 80; // 8 seconds for iOS (more time needed)
+            } else if (isMobile) {
+                maxAttempts = 50; // 5 seconds for other mobile
+            } else {
+                maxAttempts = 30; // 3 seconds for desktop
+            }
+            
+            console.log(`Waiting for video ready (max ${maxAttempts} attempts)`);
             
             const checkVideoReady = () => {
                 attempts++;
                 
                 let isReady = false;
+                const videoState = {
+                    videoWidth: this.videoElement.videoWidth,
+                    videoHeight: this.videoElement.videoHeight,
+                    readyState: this.videoElement.readyState,
+                    networkState: this.videoElement.networkState,
+                    currentTime: this.videoElement.currentTime,
+                    paused: this.videoElement.paused
+                };
                 
-                if (isMobile) {
-                    // More lenient check for mobile devices
-                    isReady = this.videoElement.videoWidth > 0 && 
-                              this.videoElement.videoHeight > 0;
-                    
-                    // For mobile, also accept partial video data
-                    if (!isReady && this.videoElement.readyState >= 1) {
+                if (isIOS) {
+                    // Very lenient check for iOS - any sign of video data
+                    isReady = (this.videoElement.videoWidth > 0 && this.videoElement.videoHeight > 0) ||
+                              this.videoElement.readyState >= 1 ||
+                              this.videoElement.currentTime > 0;
+                              
+                    // Additional iOS-specific checks
+                    if (!isReady && this.videoElement.networkState === 2) { // NETWORK_LOADING
                         isReady = true;
+                        console.log('iOS: Accepting video in loading state');
                     }
+                } else if (isMobile) {
+                    // Moderate check for other mobile devices
+                    isReady = (this.videoElement.videoWidth > 0 && this.videoElement.videoHeight > 0) ||
+                              this.videoElement.readyState >= 2;
                 } else {
                     // Standard check for desktop
                     isReady = this.videoElement.videoWidth > 0 && 
@@ -1614,9 +1965,16 @@ class WebARApp {
                               this.videoElement.readyState >= 2;
                 }
                 
+                // Log detailed state every 10 attempts for debugging
+                if (attempts % 10 === 0) {
+                    console.log(`Video ready check attempt ${attempts}/${maxAttempts}:`, videoState);
+                }
+                
                 if (isReady) {
+                    console.log(`Video ready after ${attempts} attempts:`, videoState);
                     resolve();
                 } else if (attempts >= maxAttempts) {
+                    console.log(`Video wait timeout after ${attempts} attempts, proceeding anyway:`, videoState);
                     resolve();
                 } else {
                     setTimeout(checkVideoReady, 100);
